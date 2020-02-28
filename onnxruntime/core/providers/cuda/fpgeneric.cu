@@ -57,21 +57,21 @@ __global__ void CopyVectorHalf(const half* x, int incx, half* y, int incy, int n
 
 }  // namespace
 
-cublasStatus_t cublasTransposeHelper(cublasHandle_t, cublasOperation_t, cublasOperation_t, int m, int n, const half*, const half* A, int, const half*, const half*, int, half* C, int) {
+cublasStatus_t cublasTransposeHelper(cudaStream_t stream, cublasHandle_t, cublasOperation_t, cublasOperation_t, int m, int n, const half*, const half* A, int, const half*, const half*, int, half* C, int) {
   if (C != A) {
     dim3 dimGrid((n + TRANS_TILE_DIM - 1) / TRANS_TILE_DIM, (m + TRANS_TILE_DIM - 1) / TRANS_TILE_DIM, 1);
     dim3 dimBlock(TRANS_TILE_DIM, BLOCK_ROWS, 1);
 
-    transposeNoOverlap<<<dimGrid, dimBlock>>>(C, A, n, m);
+    transposeNoOverlap<<<dimGrid, dimBlock, 0, stream>>>(C, A, n, m);
   } else {
     return CUBLAS_STATUS_NOT_SUPPORTED;
   }
   return CUBLAS_STATUS_SUCCESS;
 }
 
-cublasStatus_t cublasCopyHelper(cublasHandle_t, int n, const half* x, int incx, half* y, int incy) {
+cublasStatus_t cublasCopyHelper(cudaStream_t stream, cublasHandle_t, int n, const half* x, int incx, half* y, int incy) {
   dim3 dimGrid((unsigned int)(n + COPY_BLOCK_DIM - 1) / COPY_BLOCK_DIM, 1, 1);
   dim3 dimBlock(COPY_BLOCK_DIM, 1, 1);
-  CopyVectorHalf<<<dimGrid, dimBlock>>>(x, incx, y, incy, n);
+  CopyVectorHalf<<<dimGrid, dimBlock, 0, stream>>>(x, incx, y, incy, n);
   return CUBLAS_STATUS_SUCCESS;
 }

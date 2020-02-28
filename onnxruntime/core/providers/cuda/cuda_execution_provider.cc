@@ -61,8 +61,13 @@ ONNX_OPERATOR_KERNEL_EX(
 
 CUDAExecutionProvider::PerThreadContext::PerThreadContext(OrtDevice::DeviceId device_id, size_t cuda_mem_limit, ArenaExtendStrategy arena_extend_strategy) {
   CUDA_CALL_THROW(cudaSetDevice(device_id));
+  CUDA_CALL_THROW(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking));
+
   CUBLAS_CALL_THROW(cublasCreate(&cublas_handle_));
+  CUBLAS_CALL_THROW(cublasSetStream(cublas_handle_, stream_));
+
   CUDNN_CALL_THROW(cudnnCreate(&cudnn_handle_));
+  CUDNN_CALL_THROW(cudnnSetStream(cudnn_handle_, stream_));
 
   AllocatorCreationInfo default_memory_info(
       [](OrtDevice::DeviceId id) {
@@ -92,6 +97,12 @@ CUDAExecutionProvider::PerThreadContext::~PerThreadContext() {
     CUDNN_CALL(cudnnDestroy(cudnn_handle_));
   } catch (const std::exception& ex) {
     LOGS_DEFAULT(ERROR) << "cudnnDestroy threw:" << ex.what();
+  }
+
+  try {
+    CUDA_CALL(cudaStreamDestroy(stream_));
+  } catch (const std::exception& ex) {
+    LOGS_DEFAULT(ERROR) << "cudaStreamDestroy threw:" << ex.what();
   }
 }
 
@@ -287,6 +298,7 @@ Status CUDAExecutionProvider::OnRunEnd() {
   // record deferred release event on default stream, and release per_thread_context
   auto current_deferred_release_event = GetPerThreadContext().GetCurrentDeferredReleaseEvent();
   CUDA_RETURN_IF_ERROR(cudaEventRecord(current_deferred_release_event, nullptr));
+  CUDA_RETURN_IF_ERROR(cudaStreamSynchronize(PerThreadStream()));
   ReleasePerThreadContext();
   std::lock_guard<OrtMutex> lock(deferred_release_cpu_ptr_mutex_);
   deferred_release_cpu_ptr_[current_deferred_release_event].recorded = true;
@@ -1856,7 +1868,7 @@ static bool CastNeedFallbackToCPU(const onnxruntime::Node& node) {
 }
 
 std::unique_ptr<onnxruntime::IDataTransfer> CUDAExecutionProvider::GetDataTransfer() const {
-  return onnxruntime::make_unique<onnxruntime::GPUDataTransfer>(info_.do_copy_in_default_stream);
+  return onnxruntime::make_unique<onnxruntime::GPUDataTransfer>(this, info_.do_copy_in_default_stream);
 }
 
 std::vector<std::unique_ptr<ComputeCapability>>

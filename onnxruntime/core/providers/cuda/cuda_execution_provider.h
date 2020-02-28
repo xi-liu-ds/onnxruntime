@@ -13,7 +13,6 @@
 #include "core/platform/ort_mutex.h"
 #include "core/providers/cuda/cuda_execution_provider_info.h"
 #include "core/providers/cuda/cuda_pch.h"
-#include "core/providers/cuda/gpu_data_transfer.h"
 #include "core/providers/cuda/shared_inc/cuda_utils.h"
 
 namespace onnxruntime {
@@ -37,6 +36,10 @@ class CUDAExecutionProvider : public IExecutionProvider {
   const void* GetExecutionHandle() const noexcept override {
     // The CUDA interface does not return anything interesting.
     return nullptr;
+  }
+
+  cudaStream_t PerThreadStream() const {
+    return GetPerThreadContext().Stream();
   }
 
   cublasHandle_t PerThreadCublasHandle() {
@@ -93,6 +96,10 @@ class CUDAExecutionProvider : public IExecutionProvider {
     PerThreadContext(OrtDevice::DeviceId device_id, size_t cuda_mem_limit, ArenaExtendStrategy arena_extend_strategy);
     ~PerThreadContext();
 
+    cudaStream_t Stream() const {
+      return stream_;
+    }
+
     cublasHandle_t CublasHandle() const {
       return cublas_handle_;
     }
@@ -111,17 +118,17 @@ class CUDAExecutionProvider : public IExecutionProvider {
         if (!constant_ones_float_) {
           constant_ones_float_ = cuda::CreateConstantOnes<float>();
         }
-        return reinterpret_cast<const T*>(constant_ones_float_->GetBuffer(count));
+        return reinterpret_cast<const T*>(constant_ones_float_->GetBuffer(Stream(), count));
       } else if (std::is_same<T, double>::value) {
         if (!constant_ones_double_) {
           constant_ones_double_ = cuda::CreateConstantOnes<double>();
         }
-        return reinterpret_cast<const T*>(constant_ones_double_->GetBuffer(count));
+        return reinterpret_cast<const T*>(constant_ones_double_->GetBuffer(Stream(), count));
       } else if (std::is_same<T, half>::value) {
         if (!constant_ones_half_) {
           constant_ones_half_ = cuda::CreateConstantOnes<half>();
         }
-        return reinterpret_cast<const T*>(constant_ones_half_->GetBuffer(count));
+        return reinterpret_cast<const T*>(constant_ones_half_->GetBuffer(Stream(), count));
       } else {
         return nullptr;
       }
@@ -132,6 +139,7 @@ class CUDAExecutionProvider : public IExecutionProvider {
     }
 
    private:
+    cudaStream_t stream_ = nullptr;
     cublasHandle_t cublas_handle_ = nullptr;
     cudnnHandle_t cudnn_handle_ = nullptr;
 
