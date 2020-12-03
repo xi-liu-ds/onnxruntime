@@ -82,18 +82,19 @@ void GetSortedIndices(
 
 template <typename T>
 IAllocatorUniquePtr<T> GetOffsetsFromCounts(
+    cudaStream_t stream,
     const CudaScratchBufferAllocator& allocator,
     const T* counts, int32_t num_counts) {
   auto offsets = allocator.GetScratchBuffer<T>(num_counts);
   size_t temp_storage_size_bytes = 0;
   CUDA_CALL_THROW(cub::DeviceScan::ExclusiveSum(
       nullptr, temp_storage_size_bytes,
-      counts, offsets.get(), num_counts));
+      counts, offsets.get(), num_counts, stream));
 
   auto temp_storage = allocator.GetScratchBuffer<void>(temp_storage_size_bytes);
   CUDA_CALL_THROW(cub::DeviceScan::ExclusiveSum(
       temp_storage.get(), temp_storage_size_bytes,
-      counts, offsets.get(), num_counts));
+      counts, offsets.get(), num_counts, stream));
 
   return offsets;
 }
@@ -324,7 +325,7 @@ void PartialSumsImpl(
 
   // compute partial segment offsets per segment
   auto per_segment_partial_segment_offsets = GetOffsetsFromCounts(
-      allocator, per_segment_partial_segment_counts.get(), num_segments);
+      stream, allocator, per_segment_partial_segment_counts.get(), num_segments);
 
   SegmentIndex_t host_num_partial_segments = 0;
   {
@@ -471,7 +472,7 @@ void Impl(
         num_gathered_indices, num_gathered_per_index, gather_dimension_size, num_batches);
   } else {
     auto segment_offsets = GetOffsetsFromCounts(
-        allocator, segment_counts.get(), host_num_segments);
+        stream, allocator, segment_counts.get(), host_num_segments);
     segment_counts.reset();
 
     PartialSumsImpl(

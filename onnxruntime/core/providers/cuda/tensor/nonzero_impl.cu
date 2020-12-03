@@ -16,15 +16,15 @@ int NonZeroCalcBlockCount(int64_t x_size) {
 }
 
 cudaError_t NonZeroCalcPrefixSumTempStorageBytes(
-    int* prefix_counts, int number_of_blocks, size_t& temp_storage_bytes) {
+    cudaStream_t stream, int* prefix_counts, int number_of_blocks, size_t& temp_storage_bytes) {
   temp_storage_bytes = 0;
-  return cub::DeviceScan::InclusiveSum(nullptr, temp_storage_bytes, prefix_counts, prefix_counts, number_of_blocks);
+  return cub::DeviceScan::InclusiveSum(nullptr, temp_storage_bytes, prefix_counts, prefix_counts, number_of_blocks, stream);
 }
 
 cudaError_t NonZeroInclusivePrefixSum(
-    void* d_temp_storage, size_t temp_storage_bytes, int* prefix_counts, int number_of_blocks) {
+    cudaStream_t stream, void* d_temp_storage, size_t temp_storage_bytes, int* prefix_counts, int number_of_blocks) {
   return cub::DeviceScan::InclusiveSum(
-      d_temp_storage, temp_storage_bytes, prefix_counts, prefix_counts, number_of_blocks);
+      d_temp_storage, temp_storage_bytes, prefix_counts, prefix_counts, number_of_blocks, stream);
 }
 
 template <typename InputT, int THREADS_PER_BLOCK>
