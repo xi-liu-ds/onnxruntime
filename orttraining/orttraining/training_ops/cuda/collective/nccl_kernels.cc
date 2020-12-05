@@ -10,7 +10,6 @@ NcclAllReduce::NcclAllReduce(const OpKernelInfo& info) : NcclKernel(info) {
 }
 
 Status NcclAllReduce::ComputeInternal(OpKernelContext* context) const {
-  cudaStream_t stream = nullptr;  // Default stream
   ncclComm_t comm = nccl_->Comm(group_type_);
 
   const void* input_data = context->Input<Tensor>(0)->DataRaw();
@@ -32,7 +31,7 @@ Status NcclAllReduce::ComputeInternal(OpKernelContext* context) const {
 
   ncclDataType_t dtype = GetNcclDataType(onnx_type);
 #ifdef ORT_USE_NCCL
-  NCCL_RETURN_IF_ERROR(ncclAllReduce(input_data, output_data, input_count, dtype, ncclSum, comm, stream));
+  NCCL_RETURN_IF_ERROR(ncclAllReduce(input_data, output_data, input_count, dtype, ncclSum, comm, Stream()));
 #endif
   return Status::OK();
 }
@@ -41,7 +40,6 @@ NcclAllGather::NcclAllGather(const OpKernelInfo& info) : NcclKernel(info) {
 }
 
 Status NcclAllGather::ComputeInternal(OpKernelContext* context) const {
-  cudaStream_t stream = nullptr;  // Default stream
   ncclComm_t comm = nccl_->Comm(group_type_);
   const int rank = nccl_->Rank(group_type_);
   const int size = nccl_->Size(group_type_);
@@ -95,7 +93,7 @@ Status NcclAllGather::ComputeInternal(OpKernelContext* context) const {
   // AllGather.
   const void* fusion_data_rank_offset = (const int8_t*)fusion_data + rank_start;
 #ifdef ORT_USE_NCCL
-  NCCL_RETURN_IF_ERROR(ncclAllGather(fusion_data_rank_offset, fusion_data, rank_count, dtype, comm, stream));
+  NCCL_RETURN_IF_ERROR(ncclAllGather(fusion_data_rank_offset, fusion_data, rank_count, dtype, comm, Stream()));
 #endif
 
   // Copy AllGather results to outputs.
