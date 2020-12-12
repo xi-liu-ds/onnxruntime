@@ -302,6 +302,7 @@ Status CUDAExecutionProvider::OnRunEnd() {
   ReleasePerThreadContext();
   std::lock_guard<OrtMutex> lock(deferred_release_cpu_ptr_mutex_);
   deferred_release_cpu_ptr_[current_deferred_release_event].recorded = true;
+
   return Status::OK();
 }
 
