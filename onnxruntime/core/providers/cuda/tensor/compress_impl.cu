@@ -3,18 +3,19 @@
 
 #include "core/providers/cuda/cu_inc/common.cuh"
 #include "core/providers/cuda/cuda_common.h"
-#include "compress_impl.h"
-
-#include <thrust/scan.h>
-#include <thrust/execution_policy.h>
+#include "core/providers/cuda/tensor/compress_impl.h"
+#include <cub/cub.cuh>
 
 namespace onnxruntime {
 namespace cuda {
 
-void PrefixSumImpl(const int8_t* condition_data,
-                   int32_t* condition_cumulative_sum,
-                   const size_t length) {
-  thrust::inclusive_scan(thrust::device, condition_data, condition_data + length, condition_cumulative_sum);
+cudaError_t CompressCalcPrefixSumTempStorageBytes(cudaStream_t stream, const int8_t* condition_data, int* condition_cumulative_sum, int length, size_t& temp_storage_bytes) {
+  return cub::DeviceScan::InclusiveSum(
+    nullptr, temp_storage_bytes, condition_data, condition_cumulative_sum, length, stream);
+}
+cudaError_t CompressInclusivePrefixSum(cudaStream_t stream, void* d_temp_storage, size_t temp_storage_bytes, const int8_t* condition_data, int* condition_cumulative_sum, int length) {
+  return cub::DeviceScan::InclusiveSum(
+    d_temp_storage, temp_storage_bytes, condition_data, condition_cumulative_sum, length, stream);
 }
 
 template <typename T>
