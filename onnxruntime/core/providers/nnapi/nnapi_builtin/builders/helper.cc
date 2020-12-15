@@ -64,6 +64,32 @@ QLinearOpType GetQLinearOpType(const onnxruntime::Node& node) {
   return QLinearOpType::Unknown;
 }
 
+ConvType GetConvType(const onnxruntime::Node& node, const GraphViewer& graph_viewer) {
+  const auto& op_type = node.OpType();
+  bool is_qlinear_conv = (op_type == "QLinearConv");
+  ORT_ENFORCE(op_type == "Conv" || is_qlinear_conv);
+
+  NodeAttrHelper helper(node);
+  const auto group = helper.Get("group", 1);
+
+  size_t w_idx = is_qlinear_conv ? 3 : 1;
+  const auto& weight = node.InputDefs()[w_idx]->Name();
+  const auto& weight_tensor = *graph_viewer.GetAllInitializedTensors().at(weight);
+
+  // For ONNX we only have 1 conv ops
+  // For NNAPI we have 3
+  // Input is (N, C, H, W)
+  // group == 1,                                   --> regular conv
+  // group != 1 && weight is (M, 1, kH, kW),       --> depthwise conv
+  // group != 1 && weight is (M, C/group, kH, kW), --> grouped conv
+  if (group == 1)
+    return ConvType::Regular;
+  else if ((weight_tensor.dims()[1] == 1))
+    return ConvType::Depthwise;
+  else
+    return ConvType::Grouped;
+}
+
 bool IsQLinearBinaryOp(QLinearOpType qlinear_op_type) {
   return qlinear_op_type == QLinearOpType::QLinearConv ||
          qlinear_op_type == QLinearOpType::QLinearMatMul ||

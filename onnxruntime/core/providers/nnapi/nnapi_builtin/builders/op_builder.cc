@@ -1249,22 +1249,10 @@ Status ConvOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
 
   const auto& weight = input_defs[w_idx]->Name();
   const auto& weight_tensor = *initializers.at(weight);
-  bool conv_2d = false,
-       depthwise_conv_2d = false,
-       grouped_conv_2d = false;
-
-  // For ONNX we only have 1 conv ops
-  // For NNAPI we have 3
-  // Input is (N, C, H, W)
-  // group == 1,                                   --> regular conv
-  // group != 1 && weight is (M, 1, kH, kW),       --> depthwise conv
-  // group != 1 && weight is (M, C/group, kH, kW), --> grouped conv
-  if (group == 1)
-    conv_2d = true;
-  else if ((weight_tensor.dims()[1] == 1))
-    depthwise_conv_2d = true;
-  else
-    grouped_conv_2d = true;
+  auto conv_type = GetConvType(node, model_builder.GetGraphViewer());
+  bool conv_2d = (conv_type == ConvType::Regular),
+       depthwise_conv_2d = (conv_type == ConvType::Depthwise),
+       grouped_conv_2d = (conv_type == ConvType::Grouped);
 
   Shape onnx_weight_shape;
   for (auto dim : weight_tensor.dims())
