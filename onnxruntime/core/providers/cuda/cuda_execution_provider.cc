@@ -297,7 +297,7 @@ Status CUDAExecutionProvider::OnRunStart() {
 Status CUDAExecutionProvider::OnRunEnd() {
   // record deferred release event on default stream, and release per_thread_context
   auto current_deferred_release_event = GetPerThreadContext().GetCurrentDeferredReleaseEvent();
-  CUDA_RETURN_IF_ERROR(cudaEventRecord(current_deferred_release_event, nullptr));
+  CUDA_RETURN_IF_ERROR(cudaEventRecord(current_deferred_release_event, PerThreadStream()));
   CUDA_RETURN_IF_ERROR(cudaStreamSynchronize(PerThreadStream()));
   ReleasePerThreadContext();
   std::lock_guard<OrtMutex> lock(deferred_release_cpu_ptr_mutex_);
