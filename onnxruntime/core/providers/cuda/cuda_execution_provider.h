@@ -14,6 +14,7 @@
 #include "core/providers/cuda/cuda_execution_provider_info.h"
 #include "core/providers/cuda/cuda_pch.h"
 #include "core/providers/cuda/shared_inc/cuda_utils.h"
+#include "core/providers/cuda/shared_inc/cuda_call.h"
 
 namespace onnxruntime {
 
@@ -38,9 +39,16 @@ class CUDAExecutionProvider : public IExecutionProvider {
     return nullptr;
   }
 
-  cudaStream_t PerThreadStream() const {
-    return GetPerThreadContext().Stream();
+  Status SetComputeStream(void* stream) override {
+    if (!stream_) {
+      CUDA_CALL(cudaStreamDestroy(stream_));
+    }
+
+    stream_ = static_cast<cudaStream_t>(stream);
+    return Status::OK();
   }
+
+  cudaStream_t GetComputeStream() const { return stream_; }
 
   cublasHandle_t PerThreadCublasHandle() {
     return GetPerThreadContext().CublasHandle();
@@ -83,6 +91,7 @@ class CUDAExecutionProvider : public IExecutionProvider {
  private:
   CUDAExecutionProviderInfo info_;
   cudaDeviceProp device_prop_;
+  cudaStream_t stream_ = 0;
   struct DeferredReleaseCPUPtrs {
     bool recorded = false;
     std::vector<void*> cpu_ptrs;
@@ -93,12 +102,8 @@ class CUDAExecutionProvider : public IExecutionProvider {
 
   class PerThreadContext final {
    public:
-    PerThreadContext(OrtDevice::DeviceId device_id, size_t cuda_mem_limit, ArenaExtendStrategy arena_extend_strategy);
+    PerThreadContext(OrtDevice::DeviceId device_id, cudaStream_t stream, size_t cuda_mem_limit, ArenaExtendStrategy arena_extend_strategy);
     ~PerThreadContext();
-
-    cudaStream_t Stream() const {
-      return stream_;
-    }
 
     cublasHandle_t CublasHandle() const {
       return cublas_handle_;
@@ -118,17 +123,17 @@ class CUDAExecutionProvider : public IExecutionProvider {
         if (!constant_ones_float_) {
           constant_ones_float_ = cuda::CreateConstantOnes<float>();
         }
-        return reinterpret_cast<const T*>(constant_ones_float_->GetBuffer(Stream(), count));
+        return reinterpret_cast<const T*>(constant_ones_float_->GetBuffer(stream_, count));
       } else if (std::is_same<T, double>::value) {
         if (!constant_ones_double_) {
           constant_ones_double_ = cuda::CreateConstantOnes<double>();
         }
-        return reinterpret_cast<const T*>(constant_ones_double_->GetBuffer(Stream(), count));
+        return reinterpret_cast<const T*>(constant_ones_double_->GetBuffer(stream_, count));
       } else if (std::is_same<T, half>::value) {
         if (!constant_ones_half_) {
           constant_ones_half_ = cuda::CreateConstantOnes<half>();
         }
-        return reinterpret_cast<const T*>(constant_ones_half_->GetBuffer(Stream(), count));
+        return reinterpret_cast<const T*>(constant_ones_half_->GetBuffer(stream_, count));
       } else {
         return nullptr;
       }

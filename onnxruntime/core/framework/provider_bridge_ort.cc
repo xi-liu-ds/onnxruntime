@@ -160,7 +160,7 @@ struct ProviderHostImpl : ProviderHost {
     return onnxruntime::make_unique<CUDAPinnedAllocator>(device_id, name);
   }
 
-  std::unique_ptr<IDataTransfer> CreateGPUDataTransfer() override { return onnxruntime::make_unique<GPUDataTransfer>(); }
+  std::unique_ptr<IDataTransfer> CreateGPUDataTransfer() override { return onnxruntime::make_unique<GPUDataTransfer>(0); }
 
   void cuda__Impl_Cast(const int64_t* input_data, int32_t* output_data, size_t count) override {
     return cuda::Impl_Cast(0, input_data, output_data, count);

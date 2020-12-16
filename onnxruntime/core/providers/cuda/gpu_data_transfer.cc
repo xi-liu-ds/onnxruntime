@@ -9,12 +9,13 @@
 // so we leave it as optional, in case user need the previous behavior
 // a full fix to BFC arena is being looked at, and once it's in, we can revert this change
 namespace onnxruntime {
-GPUDataTransfer::GPUDataTransfer(const CUDAExecutionProvider* provider, bool do_copy_in_default_stream) : provider_(provider) {
+GPUDataTransfer::GPUDataTransfer(cudaStream_t stream, bool do_copy_in_default_stream) {
   // create streams, default is nullptr
-  streams_[kCudaStreamDefault] = nullptr;
+  do_copy_in_default_stream_ = do_copy_in_default_stream;
+  streams_[kCudaStreamDefault] = stream;
   if (do_copy_in_default_stream) {
-    streams_[kCudaStreamCopyIn] = nullptr;
-    streams_[kCudaStreamCopyOut] = nullptr;
+    streams_[kCudaStreamCopyIn] = stream;
+    streams_[kCudaStreamCopyOut] = stream;
   } else {
     CUDA_CALL_THROW(cudaStreamCreateWithFlags(&streams_[kCudaStreamCopyIn], cudaStreamNonBlocking));
     CUDA_CALL_THROW(cudaStreamCreateWithFlags(&streams_[kCudaStreamCopyOut], cudaStreamNonBlocking));
@@ -22,10 +23,10 @@ GPUDataTransfer::GPUDataTransfer(const CUDAExecutionProvider* provider, bool do_
 }
 
 GPUDataTransfer::~GPUDataTransfer() {
-  if (streams_[kCudaStreamCopyIn] != nullptr) {
+  if (!do_copy_in_default_stream_ && streams_[kCudaStreamCopyIn] != nullptr) {
     CUDA_CALL(cudaStreamDestroy(streams_[kCudaStreamCopyIn]));
   }
-  if (streams_[kCudaStreamCopyOut] != nullptr) {
+  if (!do_copy_in_default_stream_ && streams_[kCudaStreamCopyOut] != nullptr) {
     CUDA_CALL(cudaStreamDestroy(streams_[kCudaStreamCopyOut]));
   }
 }

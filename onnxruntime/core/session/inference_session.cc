@@ -423,6 +423,10 @@ common::Status InferenceSession::RegisterExecutionProvider(std::unique_ptr<IExec
           << "So making the execution mode sequential for this session since it uses the CUDA Execution Provider.";
       session_options_.execution_mode = ExecutionMode::ORT_SEQUENTIAL;
     }
+
+    if (session_options_.has_user_stream) {
+      p_exec_provider->SetComputeStream(session_options_.user_stream);
+    }
   }
 
   VLOGS(*session_logger_, 1) << "Adding execution provider of type: " << provider_type;

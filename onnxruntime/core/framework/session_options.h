@@ -125,6 +125,9 @@ struct SessionOptions {
 
   // Add a config pair (config_key, config_value) to the given SessionOptions
   Status AddConfigEntry(_In_z_ const char* config_key, _In_z_ const char* config_value) noexcept;
+
+  bool has_user_stream = false;
+  void* user_stream = nullptr;
 };
 
 }  // namespace onnxruntime

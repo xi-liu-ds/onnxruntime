@@ -114,7 +114,19 @@ class TensorrtExecutionProvider : public IExecutionProvider {
 
   AllocatorPtr GetAllocator(int id, OrtMemType mem_type) const override;
 
+  Status SetComputeStream(void* stream) override {
+    if (!stream_) {
+      cudaStreamDestroy(stream_);
+    }
+
+    stream_ = static_cast<cudaStream_t>(stream);
+    return Status::OK();
+  }
+
+  cudaStream_t GetComputeStream() const { return stream_; }
+
  private:
+  cudaStream_t stream_ = nullptr;
   int max_partition_iterations_ = 1000;
   int min_subgraph_size_ = 1;
   size_t max_workspace_size_ = 1 << 30;  // 1GB

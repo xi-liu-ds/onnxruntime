@@ -61,7 +61,7 @@ class CudaKernel : public OpKernel {
 
   const cudaDeviceProp& GetDeviceProp() const { return provider_->GetDeviceProp(); }
 
-  inline cudaStream_t Stream() const { return provider_->PerThreadStream(); }
+  inline cudaStream_t Stream() const { return provider_->GetComputeStream(); }
 
   // To support cudaMemcpyAsync, the cpu memory should be allocated in pinned memory
   // and it can only be released after the copy has finished
