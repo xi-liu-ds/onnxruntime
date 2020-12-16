@@ -495,6 +495,47 @@ static Status GetBinaryOpQuantizationScaleAndZeroPoint(
   return Status::OK();
 }
 
+static Status GetConvOpQuantizationScaleAndZeroPoint(
+    const ModelBuilder& model_builder, const Node& node,
+    float& a_scale, float& w_scale, float& y_scale,
+    int32_t& a_zero_point, int32_t& w_zero_point, int32_t& y_zero_point,
+    optional<vector<float>>& w_scales) ORT_MUST_USE_RESULT;
+static Status GetConvOpQuantizationScaleAndZeroPoint(
+    const ModelBuilder& model_builder, const Node& node,
+    float& a_scale, float& w_scale, float& y_scale,
+    int32_t& a_zero_point, int32_t& w_zero_point, int32_t& y_zero_point,
+    optional<vector<float>>& w_scales) {
+  // Get scale and zero points
+  // We will handle per-channel weight scale and zero point later
+  ORT_RETURN_IF_ERROR(
+      GetBinaryOpQuantizationScaleAndZeroPoint(model_builder, node,
+                                               a_scale, w_scale, y_scale,
+                                               a_zero_point, w_zero_point, y_zero_point));
+
+  const auto input_defs = node.InputDefs();
+  const auto& initializers(model_builder.GetInitializerTensors());
+  const auto& weight_tensor = *initializers.at(input_defs[3]->Name());
+
+  // We are done here is this is u8u8 QLinearConv
+  if (weight_tensor.data_type() == ONNX_NAMESPACE::TensorProto_DataType_UINT8)
+    return Status::OK();
+
+  // Now we have u8s8 QlinearConv
+  // u8s8 QlinearConv always have 0 as zero point so we are not getting it here
+  // and we do not use w_scale here, so we reset them back to 0
+  w_scale = 0.0f;
+  w_zero_point = 0;
+
+  // We need to copy the 1d scales array for per-channel quantization
+  const auto& scale_tensor = *initializers.at(input_defs[4]->Name());
+  const auto* scales = GetTensorFloatData(scale_tensor);
+  size_t scales_size = scale_tensor.dims()[0];
+  vector<float> scales_vec(scales_size, 0.0f);
+  memcpy(scales_vec.data(), scales, sizeof(float) * scales_size);
+  w_scales = onnxruntime::make_optional(std::move(scales_vec));
+  return Status::OK();
+}
+
 // NNAPI has the quantization scale and zero point embedded in the ANeuralNetworksOperandType
 // ONNX has the quantization scale and zero point as the inputs of the qlinear operators
 // We want to verify the scale and zeropoint of the ONNX inputs matches the values embedded in the NNAPI inputs
@@ -519,6 +560,35 @@ static Status IsValidInputQuantizedType(const ModelBuilder& model_builder,
                            "Input [", input_name,
                            "] NNNAPI input zero point: ", input_operand_type.operandType.zeroPoint,
                            ", ONNX input zero point: ", zero_point);
+  }
+
+  return Status::OK();
+}
+
+static Status IsValidConvWeightQuantizedType(const ModelBuilder& model_builder,
+                                             const std::string& input_name,
+                                             float scale,
+                                             int32_t zero_point,
+                                             const optional<vector<float>>& scales) ORT_MUST_USE_RESULT;
+static Status IsValidConvWeightQuantizedType(const ModelBuilder& model_builder,
+                                             const std::string& input_name,
+                                             float scale,
+                                             int32_t zero_point,
+                                             const optional<vector<float>>& scales) {
+  // first verify as the weight has no per-channel quantization
+  ORT_RETURN_IF_ERROR(IsValidInputQuantizedType(model_builder, input_name, scale, zero_point));
+
+  if (scales) {
+    const OperandType& input_operand_type = model_builder.GetOperandTypes().at(input_name);
+    if (!input_operand_type.channelQuant) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                             "Input [", input_name, "] has no channelQuant");
+    }
+
+    if (input_operand_type.channelQuant.value().scales != scales.value()) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                             "Input [", input_name, "] has mismatch scales between onnx and NNAPI");
+    }
   }
 
   return Status::OK();
@@ -1234,25 +1304,28 @@ Status ConvOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
     }
   }
 
+  const auto& weight = input_defs[w_idx]->Name();
+  const auto& weight_tensor = *initializers.at(weight);
+  auto conv_type = GetConvType(node, model_builder.GetGraphViewer().GetAllInitializedTensors());
+  bool conv_2d = (conv_type == ConvType::Regular),
+       depthwise_conv_2d = (conv_type == ConvType::Depthwise),
+       grouped_conv_2d = (conv_type == ConvType::Grouped);
+
   float x_scale = 0.0f,
         w_scale = 0.0f,
         y_scale = 0.0f;
   int32_t x_zero_point = 0,
           w_zero_point = 0,
           y_zero_point = 0;
+  optional<vector<float>> w_scales;
 
   if (is_qlinear_conv) {
-    ORT_RETURN_IF_ERROR(GetBinaryOpQuantizationScaleAndZeroPoint(model_builder, node,
-                                                                 x_scale, w_scale, y_scale,
-                                                                 x_zero_point, w_zero_point, y_zero_point));
+    // this is for per-channel quantization weights
+    ORT_RETURN_IF_ERROR(GetConvOpQuantizationScaleAndZeroPoint(model_builder, node,
+                                                               x_scale, w_scale, y_scale,
+                                                               x_zero_point, w_zero_point, y_zero_point,
+                                                               w_scales));
   }
-
-  const auto& weight = input_defs[w_idx]->Name();
-  const auto& weight_tensor = *initializers.at(weight);
-  auto conv_type = GetConvType(node, model_builder.GetGraphViewer());
-  bool conv_2d = (conv_type == ConvType::Regular),
-       depthwise_conv_2d = (conv_type == ConvType::Depthwise),
-       grouped_conv_2d = (conv_type == ConvType::Grouped);
 
   Shape onnx_weight_shape;
   for (auto dim : weight_tensor.dims())
@@ -1266,12 +1339,21 @@ Status ConvOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
     case ONNX_NAMESPACE::TensorProto_DataType_UINT8:
       onnx_weight_type = Type::TENSOR_QUANT8_ASYMM;
       break;
+    case ONNX_NAMESPACE::TensorProto_DataType_INT8:
+      onnx_weight_type = Type::TENSOR_QUANT8_SYMM_PER_CHANNEL;
+      break;
     default:
       return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
                              "The initializer of graph ", weight, " doesn't have valid type: ", weight_tensor.data_type());
   }
 
-  OperandType onnx_weight_operand_type(onnx_weight_type, onnx_weight_shape, w_scale, w_zero_point);
+  // Get weight operand type
+  // Per-channel quantized weight is handled differently
+  OperandType onnx_weight_operand_type =
+      is_qlinear_conv && w_scales.has_value()
+          ? OperandType{onnx_weight_type, onnx_weight_shape,
+                        SymmPerChannelQuantParams{w_scales.value(), depthwise_conv_2d ? 3u : 0u}}
+          : OperandType{onnx_weight_type, onnx_weight_shape, w_scale, w_zero_point};
 
   // Pre-process weights
   if (conv_2d || grouped_conv_2d) {
@@ -1283,7 +1365,7 @@ Status ConvOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
   if (is_qlinear_conv) {
     // Verify if the scale and zero point matchs from onnx input/weight and nnapi input/weight
     ORT_RETURN_IF_ERROR(IsValidInputQuantizedType(model_builder, input, x_scale, x_zero_point));
-    ORT_RETURN_IF_ERROR(IsValidInputQuantizedType(model_builder, weight, w_scale, w_zero_point));
+    ORT_RETURN_IF_ERROR(IsValidConvWeightQuantizedType(model_builder, weight, w_scale, w_zero_point, w_scales));
   }
 
   bool hasBias = (input_defs.size() > b_idx);
@@ -1301,7 +1383,7 @@ Status ConvOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
       vector<float> buffer(bias_dimen[0], 0.0f);
       OperandType bias_operand_type(Type::TENSOR_FLOAT32, bias_dimen, x_scale * w_scale);
       ORT_RETURN_IF_ERROR(model_builder.AddOperandFromPersistMemoryBuffer(bias, buffer.data(), bias_operand_type));
-    } else if (weight_type == Type::TENSOR_QUANT8_ASYMM) {
+    } else if (weight_type == Type::TENSOR_QUANT8_ASYMM || weight_type == Type::TENSOR_QUANT8_SYMM_PER_CHANNEL) {
       vector<int32_t> buffer(bias_dimen[0], 0);
       OperandType bias_operand_type(Type::TENSOR_INT32, bias_dimen, x_scale * w_scale);
       ORT_RETURN_IF_ERROR(model_builder.AddOperandFromPersistMemoryBuffer(bias, buffer.data(), bias_operand_type));
