@@ -88,6 +88,7 @@ void Check<uint8_t>(const OpTester::Data& expected_data,
   }
 
   // NNAPI's rounding is a bit different than CPU provider
+  // NNAPI uses HALF_AWAY_FROM_ZERO while our CPU provider uses HALF_TO_EVEN
   // Add 1 as threshold which is the smallest possbile for uint8_t
   if (provider_type == kNnapiExecutionProvider) {
     double threshold = 1.0;
