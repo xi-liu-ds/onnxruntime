@@ -151,13 +151,14 @@ bool HasValidQuantizationScales(const InitializedTensorSet& initializers, const 
                                  weight_tensor.data_type() == ONNX_NAMESPACE::TensorProto_DataType_INT8;
 
       // We need to check the per-channel quantization scales dimensions for u8s8 QlinearConv
-      // Otherwise, the scales should be a scalar
+      // We only support per-channel quantization for u8s8
+      // For all other cases, the scales should be a scalar
       if (is_conv_u8s8_weight) {
-        int64_t scales_dim_size = scale_tensor.dims().empty() ? 1 : scale_tensor.dims()[0];
-        if (weight_tensor.dims()[0] != scales_dim_size) {
+        int64_t scales_dim = scale_tensor.dims().empty() ? 1 : scale_tensor.dims()[0];
+        if (weight_tensor.dims()[0] != scales_dim) {
           LOGS_DEFAULT(VERBOSE) << op_type << " mismatch int8 per-channel quantization weight,"
                                 << " weight dimension[0] " << weight_tensor.dims()[0]
-                                << " scale dimension[0] " << scales_dim_size;
+                                << " scale dimension " << scales_dim;
           return false;
         }
       } else {
