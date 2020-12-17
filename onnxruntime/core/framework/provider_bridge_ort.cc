@@ -160,14 +160,16 @@ struct ProviderHostImpl : ProviderHost {
     return onnxruntime::make_unique<CUDAPinnedAllocator>(device_id, name);
   }
 
-  std::unique_ptr<IDataTransfer> CreateGPUDataTransfer() override { return onnxruntime::make_unique<GPUDataTransfer>(0); }
-
-  void cuda__Impl_Cast(const int64_t* input_data, int32_t* output_data, size_t count) override {
-    return cuda::Impl_Cast(0, input_data, output_data, count);
+  std::unique_ptr<IDataTransfer> CreateGPUDataTransfer(void* stream) override {
+    return onnxruntime::make_unique<GPUDataTransfer>(static_cast<cudaStream_t>(stream));
   }
 
-  void cuda__Impl_Cast(const int32_t* input_data, int64_t* output_data, size_t count) override {
-    return cuda::Impl_Cast(0, input_data, output_data, count);
+  void cuda__Impl_Cast(void* stream, const int64_t* input_data, int32_t* output_data, size_t count) override {
+    return cuda::Impl_Cast(static_cast<cudaStream_t>(stream), input_data, output_data, count);
+  }
+
+  void cuda__Impl_Cast(void* stream, const int32_t* input_data, int64_t* output_data, size_t count) override {
+    return cuda::Impl_Cast(static_cast<cudaStream_t>(stream), input_data, output_data, count);
   }
 
   bool CudaCall_false(int retCode, const char* exprString, const char* libName, int successCode, const char* msg) override { return CudaCall<cudaError, false>(cudaError(retCode), exprString, libName, cudaError(successCode), msg); }
