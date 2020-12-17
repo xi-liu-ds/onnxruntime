@@ -389,9 +389,7 @@ class QLinearConvOpTester {
     Y_shape.push_back(output_channels);
     for (size_t n = 0; n < kernel_rank; n++) {
       Y_shape.push_back(((input_shape[n] + pads[n] + pads[kernel_rank + n]) -
-                         (dilations[n] * (kernel_shape[n] - 1) + 1)) /
-                            strides[n] +
-                        1);
+                        (dilations[n] * (kernel_shape[n] - 1) + 1)) / strides[n] + 1);
     }
     const int64_t* output_shape = Y_shape.data() + 2;
     Y_data.resize(ShapeSize(Y_shape));
@@ -466,19 +464,19 @@ class QLinearConvOpTester {
 
     test.AddInput<T1>("x", X_.shape_, X_.data_);
     test.AddInput<float>("x_scale", {}, X_.scale_, all_input_initializer_except_x);
-    test.AddInput<T1>("x_zero_point", {}, {X_.zero_point_}, all_input_initializer_except_x);
+    test.AddInput<T1>("x_zero_point", {}, {X_.zero_point_});
 
     const std::vector<int64_t> W_scale_shape{static_cast<int64_t>(W_.scale_.size())};
     test.AddInput<T2>("w", W_.shape_, W_.data_, all_input_initializer_except_x);
     test.AddInput<float>("w_scale", W_scale_shape, W_.scale_, all_input_initializer_except_x);
-    test.AddInput<T2>("w_zero_point", {}, {W_.zero_point_}, all_input_initializer_except_x);
+    test.AddInput<T2>("w_zero_point", {}, {W_.zero_point_});
 
     test.AddInput<float>("y_scale", {}, {output_scale_}, all_input_initializer_except_x);
-    test.AddInput<T1>("y_zero_point", {}, {output_zero_point_}, all_input_initializer_except_x);
+    test.AddInput<T1>("y_zero_point", {}, {output_zero_point_});
 
     if (!B_.empty()) {
       const std::vector<int64_t> B_shape{static_cast<int64_t>(B_.size())};
-      test.AddInput<int32_t>("b", B_shape, B_, all_input_initializer_except_x);
+      test.AddInput<int32_t>("b", B_shape, B_);
     }
 
     test.AddOutput<uint8_t>("y", Y_shape, Y_data);
@@ -551,7 +549,7 @@ class QLinearConvOpTester {
   }
 
   void Run() {
-    for (bool all_input_initializer_except_x : std::initializer_list<bool>{true}) {
+    for (bool all_input_initializer_except_x : std::initializer_list<bool>{false, true}) {
       Run(all_input_initializer_except_x);
     }
   }

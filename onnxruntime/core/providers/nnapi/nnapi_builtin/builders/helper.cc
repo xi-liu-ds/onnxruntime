@@ -145,23 +145,20 @@ bool HasValidQuantizationScales(const InitializedTensorSet& initializers, const 
     const auto scale_name = input_defs[idx]->Name();
     if (Contains(initializers, scale_name)) {
       const auto& scale_tensor = *initializers.at(scale_name);
-      if (is_qlinear_conv && idx == 4) {  // this is the scale for weight in QlinearConv
-        // for qlinearconv we need to check
-        // 1. u8u8, scaler must be a scalar
-        // 2. u8s8, scaler need to have correct dimension
-        const auto& weight_tensor = *initializers.at(node.InputDefs()[3]->Name());
-        if (weight_tensor.data_type() == ONNX_NAMESPACE::TensorProto_DataType_UINT8) {
-          if (!scale_tensor.dims().empty() && scale_tensor.dims()[0] != 1) {
-            LOGS_DEFAULT(VERBOSE) << op_type << " does not support per-channel quantization for uint8 weight";
-            return false;
-          }
-        } else {  // int8
-          if (weight_tensor.dims()[0] != scale_tensor.dims()[0]) {
-            LOGS_DEFAULT(VERBOSE) << op_type << " mismatch int8 per-channel quantization weight,"
-                                  << " weight dimension[0] " << weight_tensor.dims()[0]
-                                  << " scale dimension[0] " << scale_tensor.dims()[0];
-            return false;
-          }
+      const auto& weight_tensor = *initializers.at(node.InputDefs()[3]->Name());
+      bool is_conv_weight = is_qlinear_conv && idx == 4;
+      bool is_conv_u8s8_weight = is_conv_weight &&
+                                 weight_tensor.data_type() == ONNX_NAMESPACE::TensorProto_DataType_INT8;
+
+      // We need to check the per-channel quantization scales dimensions for u8s8 QlinearConv
+      // Otherwise, the scales should be a scalar
+      if (is_conv_u8s8_weight) {
+        int64_t scales_dim_size = scale_tensor.dims().empty() ? 1 : scale_tensor.dims()[0];
+        if (weight_tensor.dims()[0] != scales_dim_size) {
+          LOGS_DEFAULT(VERBOSE) << op_type << " mismatch int8 per-channel quantization weight,"
+                                << " weight dimension[0] " << weight_tensor.dims()[0]
+                                << " scale dimension[0] " << scales_dim_size;
+          return false;
         }
       } else {
         if (!scale_tensor.dims().empty() && scale_tensor.dims()[0] != 1) {

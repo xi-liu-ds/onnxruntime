@@ -1317,10 +1317,11 @@ Status ConvOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
   int32_t x_zero_point = 0,
           w_zero_point = 0,
           y_zero_point = 0;
+
+  // this is for per-channel quantization weights
   optional<vector<float>> w_scales;
 
   if (is_qlinear_conv) {
-    // this is for per-channel quantization weights
     ORT_RETURN_IF_ERROR(GetConvOpQuantizationScaleAndZeroPoint(model_builder, node,
                                                                x_scale, w_scale, y_scale,
                                                                x_zero_point, w_zero_point, y_zero_point,
@@ -1350,9 +1351,10 @@ Status ConvOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
   // Get weight operand type
   // Per-channel quantized weight is handled differently
   OperandType onnx_weight_operand_type =
-      is_qlinear_conv && w_scales.has_value()
+      (is_qlinear_conv && w_scales.has_value())
           ? OperandType{onnx_weight_type, onnx_weight_shape,
-                        SymmPerChannelQuantParams{w_scales.value(), depthwise_conv_2d ? 3u : 0u}}
+                        SymmPerChannelQuantParams{w_scales.value(),
+                                                  depthwise_conv_2d ? 3u : 0u}}  // channelDim is 3 for depthwise-conv
           : OperandType{onnx_weight_type, onnx_weight_shape, w_scale, w_zero_point};
 
   // Pre-process weights
@@ -1390,7 +1392,8 @@ Status ConvOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
     } else {
       return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Unknown weight type ", TypeToStr(weight_type));
     }
-  } else if (is_qlinear_conv) {  // QLinearConv's bias type need special handling
+  } else if (is_qlinear_conv) {
+    // QLinearConv's bias type need special handling to add scale for quantization input
     const auto& bias_tensor = *model_builder.GetInitializerTensors().at(bias);
     ORT_RETURN_IF_NOT(bias_tensor.data_type() == ONNX_NAMESPACE::TensorProto_DataType_INT32,
                       "bias of QLinearConv should be int32, actual type: ", bias_tensor.data_type());
