@@ -646,7 +646,7 @@ endif()
 if (onnxruntime_USE_COREML)
   set(COREML_PROTO_ROOT ${PROJECT_SOURCE_DIR}/external/coremltools/mlmodel/format)
 
-  file(GLOB coreml_proto_srcs CONFIGURE_DEPENDS
+  file(GLOB coreml_proto_srcs
     "${COREML_PROTO_ROOT}/*.proto"
   )
 
@@ -654,9 +654,12 @@ if (onnxruntime_USE_COREML)
   target_include_directories(onnxruntime_coreml_proto PUBLIC $<TARGET_PROPERTY:protobuf::libprotobuf,INTERFACE_INCLUDE_DIRECTORIES> "${CMAKE_CURRENT_BINARY_DIR}")
   target_compile_definitions(onnxruntime_coreml_proto PUBLIC $<TARGET_PROPERTY:protobuf::libprotobuf,INTERFACE_COMPILE_DEFINITIONS>)
 
+  set(_src_sub_dir "coreml/")
   onnxruntime_protobuf_generate(
-          IMPORT_DIRS ${COREML_PROTO_ROOT}
-          TARGET onnxruntime_coreml_proto)
+    APPEND_PATH
+    GEN_SRC_SUB_DIR ${_src_sub_dir}
+    IMPORT_DIRS ${COREML_PROTO_ROOT}
+    TARGET onnxruntime_coreml_proto)
 endif()
 
 if (onnxruntime_USE_NNAPI_BUILTIN)
