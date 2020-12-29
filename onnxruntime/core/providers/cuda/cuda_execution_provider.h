@@ -44,11 +44,13 @@ class CUDAExecutionProvider : public IExecutionProvider {
       CUDA_CALL(cudaStreamDestroy(stream_));
     }
 
+    external_stream_ = true;
     stream_ = static_cast<cudaStream_t>(stream);
+
     return Status::OK();
   }
 
-  cudaStream_t GetComputeStream() const { return stream_; }
+  void* GetComputeStream() const override { return static_cast<void*>(stream_); }
 
   cublasHandle_t PerThreadCublasHandle() {
     return GetPerThreadContext().CublasHandle();
@@ -91,7 +93,8 @@ class CUDAExecutionProvider : public IExecutionProvider {
  private:
   CUDAExecutionProviderInfo info_;
   cudaDeviceProp device_prop_;
-  cudaStream_t stream_ = 0;
+  bool external_stream_ = false;
+  cudaStream_t stream_ = nullptr;
   struct DeferredReleaseCPUPtrs {
     bool recorded = false;
     std::vector<void*> cpu_ptrs;

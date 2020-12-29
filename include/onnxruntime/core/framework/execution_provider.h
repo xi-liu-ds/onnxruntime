@@ -166,6 +166,7 @@ class IExecutionProvider {
   virtual common::Status OnSessionInitializationEnd() { return Status::OK(); }
 
   virtual common::Status SetComputeStream(void*) { return Status::OK(); }
+  virtual void* GetComputeStream() const { return nullptr; }
 
   void InsertAllocator(AllocatorPtr allocator);
   void ReplaceAllocator(AllocatorPtr allocator);

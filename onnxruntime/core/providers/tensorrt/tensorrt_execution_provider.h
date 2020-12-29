@@ -119,13 +119,15 @@ class TensorrtExecutionProvider : public IExecutionProvider {
       cudaStreamDestroy(stream_);
     }
 
+    external_stream_ = true;
     stream_ = static_cast<cudaStream_t>(stream);
     return Status::OK();
   }
 
-  cudaStream_t GetComputeStream() const { return stream_; }
+  void* GetComputeStream() const override { return static_cast<void*>(stream_); }
 
  private:
+  bool external_stream_ = false;
   cudaStream_t stream_ = nullptr;
   int max_partition_iterations_ = 1000;
   int min_subgraph_size_ = 1;

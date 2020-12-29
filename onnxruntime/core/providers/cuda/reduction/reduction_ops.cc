@@ -419,7 +419,7 @@ Status ReduceComputeCore(CUDAExecutionProvider& cuda_ep, const Tensor& input, Pr
   std::vector<int64_t>& output_dims = prepare_reduce_metadata.output_dims;
   std::vector<int64_t>& input_dims_cudnn = prepare_reduce_metadata.input_dims_cudnn;
   std::vector<int64_t>& output_dims_cudnn = prepare_reduce_metadata.output_dims_cudnn;
-  cudaStream_t stream = cuda_ep.GetComputeStream();
+  cudaStream_t stream = static_cast<cudaStream_t>(cuda_ep.GetComputeStream());
   // special case when there is a dim value of 0 in the shape.
   if (input_count == 0) {
     assert(output.Shape().Size() == 0);

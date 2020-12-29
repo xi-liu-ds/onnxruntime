@@ -387,6 +387,7 @@ TensorrtLogger& GetTensorrtLogger() {
 TensorrtExecutionProvider::TensorrtExecutionProvider(const TensorrtExecutionProviderInfo& info)
     : IExecutionProvider{onnxruntime::kTensorrtExecutionProvider}, device_id_(info.device_id) {
   CUDA_CALL_THROW(cudaSetDevice(device_id_));
+  CUDA_CALL_THROW(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking));
 
   AllocatorCreationInfo default_memory_info(
       [](int id) { return CreateCUDAAllocator(id, TRT); }, device_id_);
@@ -461,7 +462,11 @@ TensorrtExecutionProvider::TensorrtExecutionProvider(const TensorrtExecutionProv
   }
 }
 
-TensorrtExecutionProvider::~TensorrtExecutionProvider() {}
+TensorrtExecutionProvider::~TensorrtExecutionProvider() {
+  if (!external_stream_ && stream_) {
+    CUDA_CALL(cudaStreamDestroy(stream_));
+  }
+}
 
 AllocatorPtr TensorrtExecutionProvider::GetAllocator(int id, OrtMemType mem_type) const {
   if (mem_type == OrtMemTypeDefault) {
@@ -1167,6 +1172,7 @@ common::Status TensorrtExecutionProvider::Compile(const std::vector<Node*>& fuse
       std::unordered_map<std::string, bool> dimension_update;
       std::unordered_map<std::string, std::vector<int32_t>> tensor_shape_values;
       nvinfer1::IOptimizationProfile* trt_profile = nullptr;
+      cudaStream_t stream = static_cast<cudaStream_t>(this->GetComputeStream());
 
       // Load serialized engine
       const std::string cache_path = GetCachePath(trt_state->engine_cache_path, trt_state->trt_node_name_with_precision);
@@ -1231,8 +1237,8 @@ common::Status TensorrtExecutionProvider::Compile(const std::vector<Node*>& fuse
             switch (tensor_type) {
               case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32: {
                 int32_t* input = new int32_t[shape_size];
-                CUDA_RETURN_IF_ERROR(cudaMemcpyAsync(input, ort.GetTensorData<int32_t>(input_tensor), shape_size * sizeof(int32_t), cudaMemcpyDeviceToHost, this->GetComputeStream()));
-                CUDA_RETURN_IF_ERROR(cudaStreamSynchronize(this->GetComputeStream()));
+                CUDA_RETURN_IF_ERROR(cudaMemcpyAsync(input, ort.GetTensorData<int32_t>(input_tensor), shape_size * sizeof(int32_t), cudaMemcpyDeviceToHost, stream));
+                CUDA_RETURN_IF_ERROR(cudaStreamSynchronize(stream));
                 for (int j = 0; j < shape_size; ++j) {
                   tensor_shape_values[input_name][j] = input[j];
                 }
@@ -1241,8 +1247,8 @@ common::Status TensorrtExecutionProvider::Compile(const std::vector<Node*>& fuse
               }
               case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64: {
                 int64_t* input = new int64_t[shape_size];
-                CUDA_RETURN_IF_ERROR(cudaMemcpyAsync(input, ort.GetTensorData<int64_t>(input_tensor), shape_size * sizeof(int64_t), cudaMemcpyDeviceToHost, this->GetComputeStream()));
-                CUDA_RETURN_IF_ERROR(cudaStreamSynchronize(this->GetComputeStream()));
+                CUDA_RETURN_IF_ERROR(cudaMemcpyAsync(input, ort.GetTensorData<int64_t>(input_tensor), shape_size * sizeof(int64_t), cudaMemcpyDeviceToHost, stream));
+                CUDA_RETURN_IF_ERROR(cudaStreamSynchronize(stream));
                 for (int j = 0; j < shape_size; ++j) {
                   tensor_shape_values[input_name][j] = static_cast<int32_t>(input[j]);
                 }
@@ -1508,7 +1514,7 @@ common::Status TensorrtExecutionProvider::Compile(const std::vector<Node*>& fuse
               }
               scratch_buffers.push_back(IAllocator::MakeUniquePtr<void>(alloc, input_dim_size * sizeof(int32_t)));
               buffers[binding_index] = scratch_buffers.back().get();
-              cuda::Impl_Cast<int64_t, int32_t>(this->GetComputeStream(), input_tensor_ptr, reinterpret_cast<int32_t*>(buffers[binding_index]), input_dim_size);
+              cuda::Impl_Cast<int64_t, int32_t>(stream, input_tensor_ptr, reinterpret_cast<int32_t*>(buffers[binding_index]), input_dim_size);
             }
             break;
           }
@@ -1632,7 +1638,7 @@ common::Status TensorrtExecutionProvider::Compile(const std::vector<Node*>& fuse
       }
 
       // Run TRT inference
-      if (!trt_context->enqueueV2(&buffers[0], nullptr, nullptr)) {
+      if (!trt_context->enqueueV2(&buffers[0], stream, nullptr)) {
         return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "TensorRT EP execution context enqueue failed.");
       }
 
@@ -1648,7 +1654,7 @@ common::Status TensorrtExecutionProvider::Compile(const std::vector<Node*>& fuse
         if (output_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
           auto output_tensor_ptr = ort.GetTensorMutableData<int64_t>(output_tensor[i]);
           if (output_tensor_ptr != nullptr) {
-            cuda::Impl_Cast<int32_t, int64_t>(this->GetComputeStream(), reinterpret_cast<int32_t*>(buffers[binding_index]), output_tensor_ptr, output_dim_sizes[i]);
+            cuda::Impl_Cast<int32_t, int64_t>(stream, reinterpret_cast<int32_t*>(buffers[binding_index]), output_tensor_ptr, output_dim_sizes[i]);
           }
         }
       }
