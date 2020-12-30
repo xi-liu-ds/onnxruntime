@@ -248,6 +248,7 @@ struct MyCustomKernel {
     // Do computation
 #ifdef USE_CUDA
     cuda_add(size, out, X, Y);
+    cudaStreamSynchronize(nullptr);
 #else
     for (int64_t i = 0; i < size; i++) {
       out[i] = X[i] + Y[i];
@@ -312,6 +313,7 @@ template <typename T>
 void custom_slice(const T* X, int64_t from, int64_t to, T* Y) {
 #ifdef USE_CUDA
   cuda_slice(X, from, to, Y);
+  cudaStreamSynchronize(nullptr);
 #else
   for (auto i = from; i < to; i++) {
     Y[i - from] = X[i];
