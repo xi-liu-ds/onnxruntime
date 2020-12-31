@@ -313,7 +313,6 @@ template <typename T>
 void custom_slice(const T* X, int64_t from, int64_t to, T* Y) {
 #ifdef USE_CUDA
   cuda_slice(X, from, to, Y);
-  cudaStreamSynchronize(nullptr);
 #else
   for (auto i = from; i < to; i++) {
     Y[i - from] = X[i];
