@@ -115,7 +115,7 @@ class TensorrtExecutionProvider : public IExecutionProvider {
   AllocatorPtr GetAllocator(int id, OrtMemType mem_type) const override;
 
   Status SetComputeStream(void* stream) override {
-    if (!stream_) {
+    if (stream_) {
       cudaStreamDestroy(stream_);
     }
 

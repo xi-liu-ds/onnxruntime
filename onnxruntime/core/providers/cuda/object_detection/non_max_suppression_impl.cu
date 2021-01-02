@@ -389,15 +389,16 @@ Status NonMaxSuppressionImpl(
   IndexMultiSelect<int, Box><<<blocksPerGrid, GridDim::maxThreadsPerBlock, 0, stream>>>(num_boxes, d_sorted_indices, original_boxes, sorted_boxes);
   CUDA_RETURN_IF_ERROR(cudaGetLastError());
 
-  CUDA_RETURN_IF_ERROR(cudaStreamSynchronize(stream));
   // STEP 2. filter boxes by scores
   int limited_num_boxes = num_boxes;
   if (pc.score_threshold_ != nullptr) {
+    CUDA_RETURN_IF_ERROR(cudaStreamSynchronize(stream));
     thrust::device_ptr<float> sorted_scores_device_ptr(d_sorted_scores);
     limited_num_boxes = thrust::count_if(
         sorted_scores_device_ptr,
         sorted_scores_device_ptr + num_boxes,
         DeviceGreaterThan(score_threshold));
+    CUDA_RETURN_IF_ERROR(cudaStreamSynchronize(0));
     CUDA_RETURN_IF_ERROR(cudaGetLastError());
 
     if (limited_num_boxes == 0) {
@@ -405,7 +406,7 @@ Status NonMaxSuppressionImpl(
       return Status::OK();
     }
   }
-  CUDA_RETURN_IF_ERROR(cudaStreamSynchronize(0));
+
   // STEP 3. launch NMS kernels
   ORT_RETURN_IF_ERROR(NmsGpu(stream,
                              allocator,

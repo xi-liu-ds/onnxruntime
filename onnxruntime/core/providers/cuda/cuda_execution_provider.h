@@ -40,7 +40,7 @@ class CUDAExecutionProvider : public IExecutionProvider {
   }
 
   Status SetComputeStream(void* stream) override {
-    if (!stream_) {
+    if (stream_) {
       CUDA_CALL(cudaStreamDestroy(stream_));
     }
 
