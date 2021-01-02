@@ -42,23 +42,29 @@ __device__ CudaFunctionNearestPixel func_NearestPixel_ROUND_PREFER_CEIL = Neares
 __device__ CudaFunctionNearestPixel func_NearestPixel_FLOOR = NearestPixel_FLOOR;
 __device__ CudaFunctionNearestPixel func_NearestPixel_CEIL = NearestPixel_CEIL;
 
-CudaFunctionNearestPixel GetDeviceNearstPixelFunction(ResizeNearestMode nearest_mode) {
+CudaFunctionNearestPixel GetDeviceNearstPixelFunction(cudaStream_t stream, ResizeNearestMode nearest_mode) {
   static bool already_copied = false;
   static std::mutex s_mutext;
   static CudaFunctionNearestPixel s_nearest_pixel[ResizeNearestMode::NearestModeCount];
   if (!already_copied) {
     std::lock_guard<std::mutex> lock(s_mutext);
     if (!already_copied) {
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_nearest_pixel[ResizeNearestMode::SIMPLE],
-                                     func_NearestPixel_SIMPLE, sizeof(CudaFunctionNearestPixel)));
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_nearest_pixel[ResizeNearestMode::ROUND_PREFER_FLOOR],
-                                     func_NearestPixel_ROUND_PREFER_FLOOR, sizeof(CudaFunctionNearestPixel)));
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_nearest_pixel[ResizeNearestMode::ROUND_PREFER_CEIL],
-                                     func_NearestPixel_ROUND_PREFER_CEIL, sizeof(CudaFunctionNearestPixel)));
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_nearest_pixel[ResizeNearestMode::FLOOR],
-                                     func_NearestPixel_FLOOR, sizeof(CudaFunctionNearestPixel)));
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_nearest_pixel[ResizeNearestMode::CEIL],
-                                     func_NearestPixel_CEIL, sizeof(CudaFunctionNearestPixel)));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_nearest_pixel[ResizeNearestMode::SIMPLE],
+                                     func_NearestPixel_SIMPLE, sizeof(CudaFunctionNearestPixel),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_nearest_pixel[ResizeNearestMode::ROUND_PREFER_FLOOR],
+                                     func_NearestPixel_ROUND_PREFER_FLOOR, sizeof(CudaFunctionNearestPixel),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_nearest_pixel[ResizeNearestMode::ROUND_PREFER_CEIL],
+                                     func_NearestPixel_ROUND_PREFER_CEIL, sizeof(CudaFunctionNearestPixel),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_nearest_pixel[ResizeNearestMode::FLOOR],
+                                     func_NearestPixel_FLOOR, sizeof(CudaFunctionNearestPixel),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_nearest_pixel[ResizeNearestMode::CEIL],
+                                     func_NearestPixel_CEIL, sizeof(CudaFunctionNearestPixel),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaStreamSynchronize(stream));
       already_copied = true;
     }
   }
@@ -105,25 +111,32 @@ __device__ CudaFunctionOriginalCoordinate func_TransformCoordinate_ALIGN_CORNERS
 __device__ CudaFunctionOriginalCoordinate func_TransformCoordinate_TF_HALF_PIXEL_FOR_NN = TransformCoordinate_TF_HALF_PIXEL_FOR_NN;
 __device__ CudaFunctionOriginalCoordinate func_TransformCoordinate_TF_CROP_AND_RESIZE = TransformCoordinate_TF_CROP_AND_RESIZE;
 
-CudaFunctionOriginalCoordinate GetDeviceOriginalCoordinateFunc(ResizeCoordinateTransformationMode coordinate_transform_mode) {
+CudaFunctionOriginalCoordinate GetDeviceOriginalCoordinateFunc(cudaStream_t stream, ResizeCoordinateTransformationMode coordinate_transform_mode) {
   static bool already_copied = false;
   static std::mutex s_mutext;
   static CudaFunctionOriginalCoordinate s_coordinate_tranforms[ResizeCoordinateTransformationMode::CoordinateTransformationModeCount];
   if (!already_copied) {
     std::lock_guard<std::mutex> lock(s_mutext);
     if (!already_copied) {
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::HALF_PIXEL],
-                                     func_TransformCoordinate_HALF_PIXEL, sizeof(CudaFunctionOriginalCoordinate)));
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::ASYMMETRIC],
-                                     func_TransformCoordinate_ASYMMETRIC, sizeof(CudaFunctionOriginalCoordinate)));
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::PYTORCH_HALF_PIXEL],
-                                     func_TransformCoordinate_PYTORCH_HALF_PIXEL, sizeof(CudaFunctionOriginalCoordinate)));
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::ALIGN_CORNERS],
-                                     func_TransformCoordinate_ALIGN_CORNERS, sizeof(CudaFunctionOriginalCoordinate)));
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::TF_HALF_PIXEL_FOR_NN],
-                                     func_TransformCoordinate_TF_HALF_PIXEL_FOR_NN, sizeof(CudaFunctionOriginalCoordinate)));
-      CUDA_CALL(cudaMemcpyFromSymbol(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::TF_CROP_AND_RESIZE],
-                                     func_TransformCoordinate_TF_CROP_AND_RESIZE, sizeof(CudaFunctionOriginalCoordinate)));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::HALF_PIXEL],
+                                     func_TransformCoordinate_HALF_PIXEL, sizeof(CudaFunctionOriginalCoordinate),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::ASYMMETRIC],
+                                     func_TransformCoordinate_ASYMMETRIC, sizeof(CudaFunctionOriginalCoordinate),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::PYTORCH_HALF_PIXEL],
+                                     func_TransformCoordinate_PYTORCH_HALF_PIXEL, sizeof(CudaFunctionOriginalCoordinate),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::ALIGN_CORNERS],
+                                     func_TransformCoordinate_ALIGN_CORNERS, sizeof(CudaFunctionOriginalCoordinate),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::TF_HALF_PIXEL_FOR_NN],
+                                     func_TransformCoordinate_TF_HALF_PIXEL_FOR_NN, sizeof(CudaFunctionOriginalCoordinate),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaMemcpyFromSymbolAsync(&s_coordinate_tranforms[ResizeCoordinateTransformationMode::TF_CROP_AND_RESIZE],
+                                     func_TransformCoordinate_TF_CROP_AND_RESIZE, sizeof(CudaFunctionOriginalCoordinate),
+                                     0, cudaMemcpyDeviceToHost, stream));
+      CUDA_CALL(cudaStreamSynchronize(stream));
       already_copied = true;
     }
   }
@@ -612,7 +625,7 @@ void ResizeNearestImpl(
   int blocksPerGrid = static_cast<int>(ceil(static_cast<float>(N) / GridDim::maxThreadsPerBlock));
 
   bool could2d = rank >= 2 &&
-                 transform_coordinate != GetDeviceOriginalCoordinateFunc(ResizeCoordinateTransformationMode::TF_CROP_AND_RESIZE) &&
+                 transform_coordinate != GetDeviceOriginalCoordinateFunc(stream, ResizeCoordinateTransformationMode::TF_CROP_AND_RESIZE) &&
                  std::all_of(scales_vals.Data(), scales_vals.Data() + (rank - 2), [](float v) { return v == 1.0; });
   if (could2d) {
     int64_t output_height = output_shape[rank - 2];
@@ -694,8 +707,8 @@ void ResizeImpl(
     return;
   }
 
-  CudaFunctionOriginalCoordinate transform_coordinate = GetDeviceOriginalCoordinateFunc(coordinate_transform_mode);
-  CudaFunctionNearestPixel calc_nearest_pixel = GetDeviceNearstPixelFunction(nearest_mode);
+  CudaFunctionOriginalCoordinate transform_coordinate = GetDeviceOriginalCoordinateFunc(stream, coordinate_transform_mode);
+  CudaFunctionNearestPixel calc_nearest_pixel = GetDeviceNearstPixelFunction(stream, nearest_mode);
   if (upsample_mode == UpsampleMode::NN) {
     ResizeNearestImpl(
         stream, rank, input_shape, output_shape, input_strides, output_div_pitches,
