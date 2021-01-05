@@ -139,7 +139,7 @@ function(onnxruntime_protobuf_generate)
 
     set(_generated_srcs)
     foreach(_ext ${onnxruntime_protobuf_generate_EXTENSIONS})
-      list(APPEND _generated_srcs "${CMAKE_CURRENT_BINARY_DIR}/${_src_sub_dir}/${_src_prefix}${_basename}${_ext}")
+      list(APPEND _generated_srcs "${CMAKE_CURRENT_BINARY_DIR}/${_src_sub_dir}${_src_prefix}${_basename}${_ext}")
     endforeach()
     list(APPEND _generated_srcs_all ${_generated_srcs})
 
