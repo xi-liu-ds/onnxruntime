@@ -271,17 +271,15 @@ Status TrainingSession::ConfigureForTraining(
       LOGS(*session_logger_, INFO) << weight_name_to_not_train;
     }
   }
-  ORT_IGNORE_RETURN_VALUE(Save(
-            "pre_transformed.onnx", SaveOption::NO_RELOAD));
+
   if (config.init_optimizer_states) {
     init_optimizer_states_ = config.init_optimizer_states.value();
   }
+
   ORT_RETURN_IF_ERROR(ApplyTransformationsToMainGraph(trainable_initializers, config.graph_transformer_config));
 
   ORT_RETURN_IF_ERROR(ApplyModelParallelTransformationsToMainGraph(trainable_initializers, config_result));
 
-  ORT_IGNORE_RETURN_VALUE(Save(
-          "post_transformed.onnx", SaveOption::NO_RELOAD));
   weight_partition_info_ = config_result.weight_partition_info;
 
   if (IsRootNode(config) && config.model_with_loss_function_path.has_value()) {

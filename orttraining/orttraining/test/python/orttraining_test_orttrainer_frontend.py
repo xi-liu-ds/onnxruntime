@@ -49,6 +49,8 @@ def testORTTrainerOptionsDefaultValues(test_input):
             'world_size': 1,
             'local_rank': 0,
             'allreduce_post_accumulation': False,
+            'data_parallel_size': 1,
+            'horizontal_parallel_size':1,
             'deepspeed_zero_optimization': {
                 'stage' : 0,
             },
