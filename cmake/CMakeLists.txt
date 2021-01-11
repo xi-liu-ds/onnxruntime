@@ -718,6 +718,26 @@ function(onnxruntime_add_shared_library target_name)
   endif()
 endfunction()
 
+#almost the same as the above function, except the first line of the body
+function(onnxruntime_add_executable target_name)  
+  add_executable(${target_name} ${ARGN})
+  target_link_directories(${target_name} PRIVATE ${onnxruntime_LINK_DIRS}) 
+  if (MSVC)
+    target_compile_options(${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>" "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/utf-8>")
+    target_compile_options(${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /sdl>" "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/sdl>")
+    set_target_properties(${target_name} PROPERTIES VS_CA_EXCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
+  else()
+    target_compile_definitions(${target_name} PUBLIC -DNSYNC_ATOMIC_CPP11)
+    target_include_directories(${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/external/nsync/public")
+  endif()
+  target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_ROOT})
+  if(onnxruntime_ENABLE_LTO)
+    set_target_properties(${target_name} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+    set_target_properties(${target_name} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+    set_target_properties(${target_name} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL TRUE)
+  endif()
+endfunction()
+
 function(onnxruntime_add_include_to_target dst_target)
     foreach(src_target ${ARGN})
         target_include_directories(${dst_target} PRIVATE $<TARGET_PROPERTY:${src_target},INTERFACE_INCLUDE_DIRECTORIES>)
@@ -929,8 +949,11 @@ if (WIN32)
         string(APPEND CMAKE_CXX_FLAGS
             " /analyze:stacksize 131072"
             # disable warning because there are many occurrences from test macros
-            " /wd6326 " # potential comparison of a constant with another constant
+            " /wd6326 " # potential comparison of a constant with another constant            
         )
+        if(onnxruntime_USE_OPENMP)
+          string(APPEND CMAKE_CXX_FLAGS " /wd6993") # Code analysis ignores OpenMP constructs
+        endif()
     endif()
     # Treat warning as error if onnxruntime_DEV_MODE is ON
     # For cross-compiled ARM64 binaries, there are too many warnings to fix, hence ignore warnings for now
