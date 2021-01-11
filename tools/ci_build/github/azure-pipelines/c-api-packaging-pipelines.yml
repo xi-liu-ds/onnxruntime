@@ -1,10 +1,30 @@
+parameters:
+- name: RunOnnxRuntimeTests
+  displayName: Run Tests?
+  type: boolean
+  default: true
+
+- name: DoCompliance
+  displayName: Run Compliance Tasks?
+  type: boolean
+  default: true
+
+- name: DoEsrp
+  displayName: Run code sign tasks? Must be true if you are doing an Onnx Runtime release.
+  type: boolean
+  default: false
+
+- name: IsReleaseBuild
+  displayName: Is a release build? Set it to true if you are doing an Onnx Runtime release.
+  type: boolean
+  default: false
+
 jobs:
 - job: Linux_C_API_Packaging_CPU_x64
   workspace:
     clean: all
   timeoutInMinutes:  60
-  pool:
-    vmImage: 'ubuntu-latest'
+  pool: 'Linux-CPU'
   steps:
     - template: templates/set-version-number-variables-step.yml
     - template: templates/get-docker-image-steps.yml
@@ -17,15 +37,30 @@ jobs:
       inputs:
         script: |
           mkdir -p $HOME/.onnx
-          docker run --rm --volume /data/onnx:/data/onnx:ro --volume $(Build.SourcesDirectory):/onnxruntime_src --volume $(Build.BinariesDirectory):/build --volume /data/models:/build/models:ro \
+          docker run --rm --volume /data/onnx:/data/onnx:ro --volume $(Build.SourcesDirectory):/onnxruntime_src --volume $(Build.BinariesDirectory):/build \
           --volume $HOME/.onnx:/home/onnxruntimedev/.onnx -e NIGHTLY_BUILD onnxruntimecentoscpubuild python3 \
           /onnxruntime_src/tools/ci_build/build.py --build_dir /build --config Release \
           --skip_submodule_sync  --parallel --build_shared_lib --use_openmp
         workingDirectory: $(Build.SourcesDirectory)
+
+    - script: |
+       set -e -x       
+       mkdir $(Build.ArtifactStagingDirectory)/testdata
+       cp $(Build.BinariesDirectory)/Release/libcustom_op_library.so* $(Build.ArtifactStagingDirectory)/testdata 
+       ls -al $(Build.ArtifactStagingDirectory)
+      displayName: 'Create Artifacts'
+
+    - task: PublishPipelineArtifact@0
+      displayName: 'Publish Pipeline Artifact'
+      inputs:
+        artifactName: 'drop-linux'
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+
     - template: templates/c-api-artifacts-package-and-publish-steps-posix.yml
       parameters:
           buildConfig: 'Release'
           artifactName: 'onnxruntime-linux-x64-$(OnnxRuntimeVersion)'
+          artifactNameNoVersionString: 'onnxruntime-linux-x64'
           libraryName: 'libonnxruntime.so.$(OnnxRuntimeVersion)'
           commitId: $(OnnxRuntimeGitCommitHash)
 
@@ -33,40 +68,6 @@ jobs:
       parameters :
         condition : 'succeeded'
     - template: templates/clean-agent-build-directory-step.yml
-
-- job: Linux_C_API_Packaging_GPU_x64
-  workspace:
-    clean: all
-  timeoutInMinutes:  120
-  pool: 'Linux-GPU-CUDA10'
-  steps:
-    - template: templates/set-version-number-variables-step.yml
-    - template: templates/get-docker-image-steps.yml
-      parameters:
-        Dockerfile: tools/ci_build/github/linux/docker/Dockerfile.manylinux2014_cuda10_2
-        Context: tools/ci_build/github/linux/docker
-        DockerBuildArgs: "--build-arg BUILD_UID=$( id -u )"
-        Repository: onnxruntimegpubuild
-    - task: CmdLine@2
-      inputs:
-        script: |
-          mkdir -p $HOME/.onnx
-          docker run --gpus all -e NVIDIA_VISIBLE_DEVICES=all --rm --volume /data/onnx:/data/onnx:ro --volume $(Build.SourcesDirectory):/onnxruntime_src --volume $(Build.BinariesDirectory):/build \
-          --volume /data/models:/build/models:ro --volume $HOME/.onnx:/home/onnxruntimedev/.onnx -e NIGHTLY_BUILD onnxruntimegpubuild \
-          /opt/python/cp37-cp37m/bin/python3 /onnxruntime_src/tools/ci_build/build.py --build_dir /build --config Release \
-          --skip_submodule_sync  --parallel --build_shared_lib --use_cuda --cuda_version=10.2 --cuda_home=/usr/local/cuda-10.2 --cudnn_home=/usr/local/cuda-10.2
-        workingDirectory: $(Build.SourcesDirectory)
-    - template: templates/c-api-artifacts-package-and-publish-steps-posix.yml
-      parameters:
-          buildConfig: 'Release'
-          artifactName: 'onnxruntime-linux-x64-gpu-$(OnnxRuntimeVersion)'
-          libraryName: 'libonnxruntime.so.$(OnnxRuntimeVersion)'
-          commitId: $(OnnxRuntimeGitCommitHash)
-    - template: templates/component-governance-component-detection-steps.yml
-      parameters :
-        condition : 'succeeded'
-    - template: templates/clean-agent-build-directory-step.yml
- 
 
 - job: MacOS_C_API_Packaging_CPU_x64
   workspace:
@@ -97,8 +98,21 @@ jobs:
       parameters:
           buildConfig: 'Release'
           artifactName: 'onnxruntime-osx-x64-$(OnnxRuntimeVersion)'
+          artifactNameNoVersionString: 'onnxruntime-osx-x64'
           libraryName: 'libonnxruntime.$(OnnxRuntimeVersion).dylib'
           commitId: $(OnnxRuntimeGitCommitHash)
+
+    - script: |
+       set -e -x       
+       mkdir $(Build.ArtifactStagingDirectory)/testdata
+       cp $(Build.BinariesDirectory)/Release/libcustom_op_library.dylib $(Build.ArtifactStagingDirectory)/testdata
+      displayName: 'Create Artifacts'
+
+    - task: PublishPipelineArtifact@0
+      displayName: 'Publish Pipeline Artifact'
+      inputs:
+        artifactName: 'drop-osx'
+        targetPath: '$(Build.ArtifactStagingDirectory)'
           
     - template: templates/component-governance-component-detection-steps.yml
       parameters :
@@ -109,23 +123,41 @@ jobs:
   workspace:
     clean: all
   pool: 'Win-CPU-2019'
-  timeoutInMinutes:  160
+  timeoutInMinutes:  300
   strategy:
-    maxParallel: 2
     matrix: 
       x86:
         EnvSetupScript: setup_env_x86.bat
         buildArch: x86
         msbuildArch: x86
         msbuildPlatform: Win32
+        packageName: x86
         buildparameter: --x86
+        runTests: ${{ parameters.RunOnnxRuntimeTests }}
       x64:
         EnvSetupScript: setup_env.bat
         buildArch: x64
         msbuildArch: amd64
         msbuildPlatform: x64
+        packageName: x64
         buildparameter:
-
+        runTests: ${{ parameters.RunOnnxRuntimeTests }}
+      arm:
+        EnvSetupScript: setup_env.bat
+        buildArch: x64
+        msbuildArch: amd64
+        msbuildPlatform: arm
+        packageName: arm
+        buildparameter: --arm
+        runTests: false
+      arm64:
+        EnvSetupScript: setup_env.bat
+        buildArch: x64
+        msbuildArch: amd64
+        msbuildPlatform: arm64
+        packageName: arm64
+        buildparameter: --arm64
+        runTests: false
   steps:
     - template: templates/telemetry-steps.yml
     
@@ -158,12 +190,11 @@ jobs:
     - template: templates/set-test-data-variables-step.yml
     - template: templates/set-version-number-variables-step.yml
 
-
     - task: PythonScript@0
       displayName: 'Generate cmake config'
       inputs:
         scriptPath: '$(Build.SourcesDirectory)\tools\ci_build\build.py'
-        arguments: '--config RelWithDebInfo --enable_lto --disable_rtti --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --update --cmake_generator "Visual Studio 16 2019" --use_openmp --build_shared_lib --enable_onnx_tests $(TelemetryOption) $(buildparameter)'
+        arguments: '--config RelWithDebInfo --enable_lto --disable_rtti --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --update --cmake_generator "Visual Studio 16 2019" --use_openmp --build_shared_lib --enable_onnx_tests --enable_wcos  --use_winml $(TelemetryOption) $(buildparameter)'
         workingDirectory: '$(Build.BinariesDirectory)'
  
     - task: VSBuild@1
@@ -180,16 +211,61 @@ jobs:
 
     - task: PythonScript@0
       displayName: 'test'
+      condition: and(succeeded(), eq(variables.runTests, true))
       inputs:
         scriptPath: '$(Build.SourcesDirectory)\tools\ci_build\build.py'
-        arguments: '--config RelWithDebInfo --enable_lto --disable_rtti --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --test --cmake_generator "Visual Studio 16 2019" --use_openmp --build_shared_lib --enable_onnx_tests $(TelemetryOption) $(buildparameter)'
+        arguments: '--config RelWithDebInfo --enable_lto --disable_rtti --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --test --cmake_generator "Visual Studio 16 2019" --use_openmp --build_shared_lib --enable_onnx_tests --enable_wcos  --use_winml $(TelemetryOption) $(buildparameter)'
         workingDirectory: '$(Build.BinariesDirectory)'
+
+    - script: |
+       dir *.dll
+       mkdir $(Build.ArtifactStagingDirectory)\testdata
+      workingDirectory: '$(Build.BinariesDirectory)/RelWithDebInfo/RelWithDebInfo'
+      displayName: 'List built DLLs' 
 
     - template: templates/c-api-artifacts-package-and-publish-steps-windows.yml
       parameters:
         buildConfig: RelWithDebInfo
-        artifactName: 'onnxruntime-win-$(buildArch)-$(OnnxRuntimeVersion)'
+        artifactName: 'onnxruntime-win-$(packageName)-$(OnnxRuntimeVersion)'
+        packageName: $(packageName)
         commitId: $(OnnxRuntimeGitCommitHash)
+        DoEsrp: ${{ parameters.DoEsrp }}
+
+    #Upload protoc.exe, which will be used in nuget build for generating C# files
+    - task: PublishPipelineArtifact@1
+      condition: and(succeeded(), eq(variables.packageName, 'x64'))
+      inputs:
+        targetPath: '$(Build.BinariesDirectory)\RelWithDebInfo\external\protobuf\cmake\RelWithDebInfo\protoc.exe' 
+        artifactName: 'drop-extra' 
+
+
+    - task: CopyFiles@2
+      displayName: 'Copy custom_op_library to: $(Build.ArtifactStagingDirectory)'
+      condition: and(succeeded(), eq(variables.packageName, 'x64'))
+      inputs:
+        SourceFolder: '$(Build.BinariesDirectory)\RelWithDebInfo\RelWithDebInfo'
+        Contents: 'custom_op_library.dll'
+        TargetFolder: '$(Build.ArtifactStagingDirectory)/testdata'
+
+    #To be used in test_win.yml
+    - task: PublishPipelineArtifact@1
+      condition: and(succeeded(), eq(variables.packageName, 'x64'))
+      inputs:
+        targetPath: '$(Build.BinariesDirectory)\RelWithDebInfo\external\protobuf\cmake\RelWithDebInfo\protoc.exe' 
+        artifactName: 'drop-nuget'
+
+    - ${{ if eq(parameters['DoCompliance'], 'true') }}:
+      - task: PythonScript@0
+        displayName: 'Regenerate cmake config with STATIC_ANALYSIS=ON '
+        inputs:
+          scriptPath: '$(Build.SourcesDirectory)\tools\ci_build\build.py'
+          arguments: '--config RelWithDebInfo --enable_lto --disable_rtti --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --update --cmake_generator "Visual Studio 16 2019" --use_openmp --build_shared_lib --enable_onnx_tests --enable_wcos  --use_winml $(TelemetryOption) $(buildparameter) --cmake_extra_defines onnxruntime_ENABLE_STATIC_ANALYSIS=ON'
+          workingDirectory: '$(Build.BinariesDirectory)'
+
+      - template: templates/compliance.yml
+        parameters :
+          msbuildPlatform: $(msbuildPlatform)
+
     - template: templates/component-governance-component-detection-steps.yml
       parameters :
         condition : 'succeeded'
@@ -198,6 +274,291 @@ jobs:
       displayName: 'Clean Agent Directories'
       condition: always()
 
+- job: NuGet_Packaging
+  workspace:
+    clean: all
+  pool: 'Win-CPU-2019'
+  variables:
+    OrtPackageId: 'Microsoft.ML.OnnxRuntime'
+  dependsOn:
+  - Linux_C_API_Packaging_CPU_x64
+  - MacOS_C_API_Packaging_CPU_x64
+  - Windows_Packaging_CPU
+  condition: succeeded()
+  steps: 
+  - task: DownloadPipelineArtifact@0
+    displayName: 'Download Pipeline Artifact - NuGet'
+    inputs:
+      artifactName: 'onnxruntime-win-x64'
+      targetPath: '$(Build.BinariesDirectory)/nuget-artifact'
+
+  - task: DownloadPipelineArtifact@0
+    displayName: 'Download Pipeline Artifact - NuGet'
+    inputs:
+      artifactName: 'onnxruntime-win-x86'
+      targetPath: '$(Build.BinariesDirectory)/nuget-artifact'
+      
+  - task: DownloadPipelineArtifact@0
+    displayName: 'Download Pipeline Artifact - NuGet'
+    inputs:
+      artifactName: 'onnxruntime-win-arm64'
+      targetPath: '$(Build.BinariesDirectory)/nuget-artifact'
+
+  - task: DownloadPipelineArtifact@0
+    displayName: 'Download Pipeline Artifact - NuGet'
+    inputs:
+      artifactName: 'onnxruntime-win-arm'
+      targetPath: '$(Build.BinariesDirectory)/nuget-artifact'
+
+  - task: DownloadPipelineArtifact@0
+    displayName: 'Download Pipeline Artifact - NuGet'
+    inputs:
+      artifactName: 'onnxruntime-osx-x64'
+      targetPath: '$(Build.BinariesDirectory)/nuget-artifact'
+
+  - task: DownloadPipelineArtifact@0
+    displayName: 'Download Pipeline Artifact - NuGet'
+    inputs:
+      artifactName: 'onnxruntime-linux-x64'
+      targetPath: '$(Build.BinariesDirectory)/nuget-artifact'
+
+  - task: DownloadPipelineArtifact@0
+    displayName: 'Download Pipeline Artifact - NuGet'
+    inputs:
+      artifactName: 'drop-extra'
+      targetPath: '$(Build.BinariesDirectory)/extra-artifact'
+
+  #Reconstruct the build dir
+  - task: PowerShell@2
+    displayName: 'PowerShell Script'
+    inputs:
+      targetType: filePath
+      filePath: $(Build.SourcesDirectory)\tools\ci_build\github\windows\extract_nuget_files.ps1
+
+  - script: |
+     dir
+    workingDirectory: '$(Build.BinariesDirectory)/nuget-artifact'
+    displayName: 'List artifacts'
+
+  - task: NuGetToolInstaller@0
+    displayName: Use Nuget 5.7.0
+    inputs:
+      versionSpec: 5.7.0
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Restore nuget packages'
+    inputs:
+      command: restore
+      projects: '$(Build.SourcesDirectory)\csharp\OnnxRuntime.CSharp.sln'
+      configuration: RelWithDebInfo
+      arguments: '--configuration RelWithDebInfo -p:Platform="Any CPU" -p:OrtPackageId=$(OrtPackageId)'
+      workingDirectory: '$(Build.SourcesDirectory)\csharp'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Build C#'
+    inputs:
+      command: build
+      projects: '$(Build.SourcesDirectory)\csharp\OnnxRuntime.CSharp.sln'
+      configuration: RelWithDebInfo
+      arguments: '--configuration RelWithDebInfo -p:Platform="Any CPU" -p:OnnxRuntimeBuildDirectory="$(Build.BinariesDirectory)" -p:OrtPackageId=$(OrtPackageId)'
+      workingDirectory: '$(Build.SourcesDirectory)\csharp'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Test C#'
+    condition: and(succeeded(), eq('${{ parameters.RunOnnxRuntimeTests }}', true))
+    inputs:
+        command: test
+        projects: '$(Build.SourcesDirectory)\csharp\test\Microsoft.ML.OnnxRuntime.Tests\Microsoft.ML.OnnxRuntime.Tests.csproj'
+        configuration: RelWithDebInfo
+        arguments: '--configuration RelWithDebInfo -p:Platform="Any CPU" -p:OnnxRuntimeBuildDirectory="$(Build.BinariesDirectory)" -p:OrtPackageId=$(OrtPackageId)'
+        workingDirectory: '$(Build.SourcesDirectory)\csharp'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Build C#'
+    inputs:
+      command: build
+      projects: '$(Build.SourcesDirectory)\csharp\OnnxRuntime.CSharp.proj'
+      configuration: RelWithDebInfo
+      arguments: '--configuration RelWithDebInfo -t:CreatePackage -p:Platform="Any CPU" -p:OnnxRuntimeBuildDirectory="$(Build.BinariesDirectory)" -p:OrtPackageId=$(OrtPackageId)'
+      workingDirectory: '$(Build.SourcesDirectory)\csharp'
+        
+  - template: templates/win-esrp-dll.yml
+    parameters:
+      FolderPath: '$(Build.SourcesDirectory)\csharp\src\Microsoft.ML.OnnxRuntime\bin\RelWithDebInfo'
+      DisplayName: 'ESRP - Sign C# dlls'
+      DoEsrp: ${{ parameters.DoEsrp }}
+
+  - task: BatchScript@1
+    displayName: 'Bundle Native NuGet and other binaries'
+    inputs:
+      filename: $(Build.SourcesDirectory)\tools\ci_build\github\windows\bundle_dlls.bat
+      workingFolder: $(Build.BinariesDirectory)\RelWithDebInfo\RelWithDebInfo\nuget-artifacts
+
+  - task: CopyFiles@2
+    displayName: 'Copy nuget packages to: $(Build.ArtifactStagingDirectory)'
+    inputs:
+      SourceFolder: '$(Build.BinariesDirectory)\RelWithDebInfo\RelWithDebInfo\nuget-artifacts'
+      Contents: '*.nupkg'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+  - task: CopyFiles@2
+    displayName: 'Copy nuget packages to: $(Build.ArtifactStagingDirectory)'
+    inputs:
+      SourceFolder: '$(Build.SourcesDirectory)\csharp\src\Microsoft.ML.OnnxRuntime\bin\RelWithDebInfo'
+      Contents: '*.nupkg'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+  - template: templates/esrp_nuget.yml
+    parameters:
+      DisplayName: 'ESRP - sign NuGet package'
+      FolderPath: '$(Build.ArtifactStagingDirectory)'
+      DoEsrp: ${{ parameters.DoEsrp }}
+
+  - template: templates/validate-nuget.yml
+    parameters:
+      NugetPath: '$(Build.ArtifactStagingDirectory)'
+      NugetPackage: 'Microsoft.ML.OnnxRuntime.*nupkg'
+      PlatformsSupported: 'win-x64,win-x86,linux-x64,osx-x64'
+      VerifyNugetSigning: false
+
+  - task: PublishPipelineArtifact@0
+    displayName: 'Publish Pipeline NuGet Artifact'
+    inputs:
+      artifactName: 'drop-signed-nuget'
+      targetPath: '$(Build.ArtifactStagingDirectory)'
+
+- template: nuget/templates/test_all_os.yml
+
+- job: Publish_NuGet_Package_And_Report
+  workspace:
+    clean: all
+  variables:
+  - group: Dashboard_MySQL_Secret
+  - name: GDN_CODESIGN_TARGETDIRECTORY
+    value: '$(Build.BinariesDirectory)/nuget-artifact/final-package'
+  pool: 'Win-CPU-2019'
+  condition: and (succeeded(), and (${{ parameters.DoEsrp }}, eq(variables['Build.SourceBranch'], 'refs/heads/master')))
+  dependsOn:
+  - NuGet_Test_Win
+  - NuGet_Test_Linux
+  - NuGet_Test_MacOS
+  steps:
+
+  - template: templates/set-version-number-variables-step.yml
+
+  - template: nuget/templates/upload-binary-sizes-from-nuget-package.yml
+    parameters:
+      downloadPath: $(Build.BinariesDirectory)/nuget-artifact/final-package
+      gitCommitHash: $(OnnxRuntimeGitCommitHashShort)  
+
+  - template: nuget/templates/get-nuget-package-version-as-variable.yml
+    parameters:
+      packageFolder: '$(Build.BinariesDirectory)/nuget-artifact/final-package'
+
+  - task: PowerShell@2
+    displayName: 'Get Current Date'
+    inputs:
+      targetType: 'inline'
+      script: |
+          $date = $(Get-Date -Format "yyyy-MM-dd")
+          Write-Host "##vso[task.setvariable variable=CurrentDate]$date"
+
+  - task: AzureFileCopy@3
+    displayName: 'Copy Signed Native NuGet Package to Blob Store'
+    condition: ne(variables['IsReleaseBuild'], 'true') # release build has a different package naming scheme
+    inputs:
+      sourcePath: '$(Build.BinariesDirectory)/nuget-artifact/final-package/Microsoft.ML.OnnxRuntime.$(NuGetPackageVersionNumber).nupkg'
+      azureSubscription: 'AIInfraBuildOnnxRuntimeOSS'
+      destination: azureBlob
+      storage: ortpackages
+      containerName: ortpackages
+      blobPrefix: '$(CurrentDate)/'
+    continueOnError: true
+
+  - task: AzureFileCopy@3
+    displayName: 'Copy Signed Managed NuGet Package to Blob Store'
+    condition: ne(variables['IsReleaseBuild'], 'true') # release build has a different package naming scheme
+    inputs:
+      sourcePath: '$(Build.BinariesDirectory)/nuget-artifact/final-package/Microsoft.ML.OnnxRuntime.Managed.$(NuGetPackageVersionNumber).nupkg'
+      azureSubscription: 'AIInfraBuildOnnxRuntimeOSS'
+      destination: azureBlob
+      storage: ortpackages
+      containerName: ortpackages
+      blobPrefix: '$(CurrentDate)/'
+    continueOnError: true
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Copy Signed Native NuGet Package to Internal NuGet Feed'
+    condition: ne(variables['IsReleaseBuild'], 'true') # release build has a different package naming scheme
+    inputs:
+      command: 'push'
+      searchPatternPush: '$(Build.BinariesDirectory)/nuget-artifact/final-package/Microsoft.ML.OnnxRuntime.$(NuGetPackageVersionNumber).nupkg'
+      feedPublish: 'OnnxRuntime'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Copy Signed Managed NuGet Package to Internal NuGet Feed'
+    condition: ne(variables['IsReleaseBuild'], 'true') # release build has a different package naming scheme
+    inputs:
+      command: 'push'
+      searchPatternPush: '$(Build.BinariesDirectory)/nuget-artifact/final-package/Microsoft.ML.OnnxRuntime.Managed.$(NuGetPackageVersionNumber).nupkg'
+      feedPublish: 'OnnxRuntime'
+
+  - task: NuGetCommand@2
+    displayName: 'Copy Signed Native NuGet Package to ORT-NIGHTLY'
+    condition: ne(variables['IsReleaseBuild'], 'true') # release build has a different package naming scheme
+    inputs:
+      command: 'push'
+      packagesToPush: '$(Build.BinariesDirectory)/nuget-artifact/final-package/Microsoft.ML.OnnxRuntime.$(NuGetPackageVersionNumber).nupkg'
+      publishVstsFeed: '2692857e-05ef-43b4-ba9c-ccf1c22c437c/7982ae20-ed19-4a35-a362-a96ac99897b7'
+
+  - task: NuGetCommand@2
+    displayName: 'Copy Signed Managed NuGet Package to ORT-NIGHTLY'
+    condition: ne(variables['IsReleaseBuild'], 'true') # release build has a different package naming scheme
+    inputs:
+      command: 'push'
+      packagesToPush: '$(Build.BinariesDirectory)/nuget-artifact/final-package/Microsoft.ML.OnnxRuntime.Managed.$(NuGetPackageVersionNumber).nupkg'
+      publishVstsFeed: '2692857e-05ef-43b4-ba9c-ccf1c22c437c/7982ae20-ed19-4a35-a362-a96ac99897b7'
+
+  - task: mspremier.PostBuildCleanup.PostBuildCleanup-task.PostBuildCleanup@3
+    displayName: 'Clean Agent Directories'
+    condition: always()
+
+- job: Linux_C_API_Packaging_GPU_x64
+  workspace:
+    clean: all
+  timeoutInMinutes:  120
+  pool: 'Linux-GPU-CUDA10'
+  steps:
+    - template: templates/set-version-number-variables-step.yml
+    - template: templates/get-docker-image-steps.yml
+      parameters:
+        Dockerfile: tools/ci_build/github/linux/docker/Dockerfile.manylinux2014_cuda10_2
+        Context: tools/ci_build/github/linux/docker
+        DockerBuildArgs: "--build-arg BUILD_UID=$( id -u )"
+        Repository: onnxruntimegpubuild
+    - task: CmdLine@2
+      inputs:
+        script: |
+          mkdir -p $HOME/.onnx
+          docker run --gpus all -e NVIDIA_VISIBLE_DEVICES=all --rm --volume /data/onnx:/data/onnx:ro --volume $(Build.SourcesDirectory):/onnxruntime_src --volume $(Build.BinariesDirectory):/build \
+          --volume /data/models:/build/models:ro --volume $HOME/.onnx:/home/onnxruntimedev/.onnx -e NIGHTLY_BUILD onnxruntimegpubuild \
+          /opt/python/cp37-cp37m/bin/python3 /onnxruntime_src/tools/ci_build/build.py --build_dir /build --config Release \
+          --skip_submodule_sync  --parallel --build_shared_lib --use_cuda --cuda_version=10.2 --cuda_home=/usr/local/cuda-10.2 --cudnn_home=/usr/local/cuda-10.2
+        workingDirectory: $(Build.SourcesDirectory)
+
+    - template: templates/c-api-artifacts-package-and-publish-steps-posix.yml
+      parameters:
+          buildConfig: 'Release'
+          artifactName: 'onnxruntime-linux-x64-gpu-$(OnnxRuntimeVersion)'
+          artifactNameNoVersionString:  'onnxruntime-linux-x64-gpu'
+          libraryName: 'libonnxruntime.so.$(OnnxRuntimeVersion)'
+          commitId: $(OnnxRuntimeGitCommitHash)
+
+    - template: templates/component-governance-component-detection-steps.yml
+      parameters :
+        condition : 'succeeded'
+    - template: templates/clean-agent-build-directory-step.yml
+    
 - job: Windows_Packaging_GPU
   workspace:
     clean: all
@@ -274,9 +635,21 @@ jobs:
         buildConfig: RelWithDebInfo
         artifactName: 'onnxruntime-win-$(buildArch)-gpu-$(OnnxRuntimeVersion)'
         commitId: $(OnnxRuntimeGitCommitHash)
+        packageName: $(buildArch)
+        DoEsrp: ${{ parameters.DoEsrp }}
+
+    - ${{ if eq(parameters['DoCompliance'], 'true') }}:
+      - task: PythonScript@0
+        displayName: 'Regenerate cmake config with STATIC_ANALYSIS=ON '
+        inputs:
+          scriptPath: '$(Build.SourcesDirectory)\tools\ci_build\build.py'
+          arguments: '--config RelWithDebInfo --enable_lto --disable_rtti --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --build_shared_lib --test --cmake_generator "Visual Studio 16 2019" --build_shared_lib --enable_onnx_tests $(TelemetryOption) $(buildparameter) --cmake_extra_defines onnxruntime_ENABLE_STATIC_ANALYSIS=ON'
+          workingDirectory: '$(Build.BinariesDirectory)'
+
     - template: templates/component-governance-component-detection-steps.yml
       parameters :
         condition : 'succeeded'
     - task: mspremier.PostBuildCleanup.PostBuildCleanup-task.PostBuildCleanup@3
       displayName: 'Clean Agent Directories'
       condition: always()
+    
