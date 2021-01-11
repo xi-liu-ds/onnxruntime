@@ -29,6 +29,14 @@ def run_ortmodule_api_tests(cwd, log):
     run_subprocess(command, cwd=cwd, log=log).check_returncode()
 
 
+def run_ortmodule_poc_net(cwd, log):
+    log.debug('Running: ORTModule POCNet for MNIST')
+
+    command = [sys.executable, 'orttraining_test_ortmodule_poc.py']
+
+    run_subprocess(command, cwd=cwd, log=log).check_returncode()
+
+
 def main():
     args = parse_arguments()
     cwd = args.cwd
