@@ -147,13 +147,20 @@ def main():
 
     logger.info(f"Exporting ONNX model to {raw_onnx_model}")
     use_padding = MODEL_CLASSES[args.model_class][2]
+    if args.model_class == 'GPT2LMHeadModel_BeamSearchStep':
+        has_beam_search = True
+        print('Processing beam search step onnx file generation')
+    else:
+        has_beam_search = False
     Gpt2Helper.export_onnx(model,
                            device,
                            raw_onnx_model,
                            args.verbose,
                            args.use_external_data_format,
                            has_position_ids=use_padding,
-                           has_attention_mask=use_padding)
+                           has_attention_mask=use_padding,
+                           has_beam_select_idx=True,
+                           has_beam_search=has_beam_search) # FIXME how to decide that
 
     if args.optimize_onnx or args.precision != Precision.FLOAT32:
         output_path = onnx_model_paths[str(args.precision) if args.precision != Precision.INT8 else 'fp32']
@@ -189,7 +196,9 @@ def main():
                                atol=args.tolerance,
                                model_class=args.model_class,
                                has_position_ids=use_padding,
-                               has_attention_mask=use_padding)
+                               has_attention_mask=use_padding,
+                               has_beam_select_idx=True,
+                               has_beam_search=has_beam_search)
 
     if args.input_test_file:
         test_inputs = []
