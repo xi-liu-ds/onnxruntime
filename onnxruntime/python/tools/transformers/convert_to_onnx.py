@@ -147,6 +147,7 @@ def main():
 
     logger.info(f"Exporting ONNX model to {raw_onnx_model}")
     use_padding = MODEL_CLASSES[args.model_class][2]
+    use_beam_search_step = args.model_class == 'GPT2LMHeadModel_BeamSearchStep'
     if args.model_class == 'GPT2LMHeadModel_BeamSearchStep':
         has_beam_search = True
         print('Processing beam search step onnx file generation')
@@ -202,52 +203,117 @@ def main():
 
     if args.input_test_file:
         test_inputs = []
+        input_texts = None
         # Each line of test file is a JSON string like:
         # {"input_ids": [[14698, 257, 1310, 13688, 319, 326]]}
         with open(args.input_test_file) as read_f:
-            for _, line in enumerate(read_f):
-                line = line.rstrip()
-                data = json.loads(line)
-                input_ids = torch.from_numpy(numpy.asarray(data["input_ids"], dtype=numpy.int64)).to(device)
+            if args.input_test_file.endswith('.json'):
+                for _, line in enumerate(read_f):
+                    line = line.rstrip()
+                    data = json.loads(line)
+                    input_ids = torch.from_numpy(numpy.asarray(data["input_ids"], dtype=numpy.int64)).to(device)
 
-                if use_padding:
-                    if "attention_mask" in data:
-                        numpy_float = numpy.float16 if args.precision == Precision.FLOAT16 else numpy.float32
-                        attention_mask = torch.from_numpy(numpy.asarray(data["attention_mask"],
-                                                                        dtype=numpy_float)).to(device)
+                    if use_padding:
+                        if "attention_mask" in data:
+                            numpy_float = numpy.float16 if args.precision == Precision.FLOAT16 else numpy.float32
+                            attention_mask = torch.from_numpy(numpy.asarray(data["attention_mask"],
+                                                                            dtype=numpy_float)).to(device)
+                        else:
+                            padding = -1
+                            attention_mask = (
+                                input_ids !=
+                                padding).type(torch.float16 if args.precision == Precision.FLOAT16 else torch.float32)
+                            input_ids.masked_fill_(input_ids == padding, 0)
+
+                        if "position_ids" in data:
+                            position_ids = torch.from_numpy(numpy.asarray(data["position_ids"],
+                                                                        dtype=numpy.int64)).to(device)
+                        else:
+                            position_ids = (attention_mask.long().cumsum(-1) - 1)
+                            position_ids.masked_fill_(position_ids < 0, 0)
+                        
+                        inputs = {"input_ids": input_ids, "position_ids": position_ids, "attention_mask": attention_mask}
                     else:
-                        padding = -1
-                        attention_mask = (
-                            input_ids !=
-                            padding).type(torch.float16 if args.precision == Precision.FLOAT16 else torch.float32)
-                        input_ids.masked_fill_(input_ids == padding, 0)
+                        inputs = {"input_ids": input_ids}
+            else:
+                from gptcc.common import END_OF_LINE
+                from gptcc.deploy.exec import exec_input_preprocessing
+                from gptcc.tokenizer import Tokenizer   # latest gptcc is required 
 
-                    if "position_ids" in data:
-                        position_ids = torch.from_numpy(numpy.asarray(data["position_ids"],
-                                                                      dtype=numpy.int64)).to(device)
-                    else:
-                        position_ids = (attention_mask.long().cumsum(-1) - 1)
-                        position_ids.masked_fill_(position_ids < 0, 0)
+                # pre-defined args.
+                model_dir = Path(args.model_name_or_path)
+                literals_file = model_dir / "literals.json"
+                token_lookback = 256
+                padding = 1
 
-                    inputs = {"input_ids": input_ids, "position_ids": position_ids, "attention_mask": attention_mask}
-                else:
-                    inputs = {"input_ids": input_ids}
+                # prepare input_ids.
+                tokenizer = Tokenizer(model_dir)
+                input_texts = read_f.read()
+                input_texts = exec_input_preprocessing(
+                    input_texts, str(literals_file), language="csharp"
+                )
+                initial_tokens = []
+                for code_segment in input_texts.splitlines():
+                    initial_tokens.extend(tokenizer.tokenize(code_segment))
+                    initial_tokens.append(END_OF_LINE)
+                if input_texts[-1] != "\n":
+                    initial_tokens.pop(-1)
+                    
+                input_ids = tokenizer.convert_tokens_to_ids(initial_tokens)
+                input_ids = [input_ids[-token_lookback:]]
+                max_len = max(len(x) for x in input_ids)
+                input_ids = [[padding] * (max_len - len(x)) + x for x in input_ids]
+                input_ids = torch.from_numpy(numpy.asarray(input_ids, dtype=numpy.int64)).to(device)
+            
+                # prepare input arguments.
+                attention_mask = (
+                    input_ids != padding
+                ).type(torch.float16 if args.precision == Precision.FLOAT16 else torch.float32)
+                input_ids.masked_fill_(input_ids == padding, 0)
 
-                test_inputs.append(inputs)
+                position_ids = (attention_mask.long().cumsum(-1) - 1)
+                position_ids.masked_fill_(position_ids < 0, 0)
+                
+                inputs = ({
+                    "input_ids": input_ids, 
+                    "position_ids": position_ids, 
+                    "attention_mask": attention_mask
+                })
+
+                if use_beam_search_step:
+                    beam_select_idx = torch.zeros([1, input_ids.shape[0]]).long()
+
+                    input_log_probs = torch.zeros([input_ids.shape[0], 1])
+                    input_unfinished_sents = torch.ones(
+                        [input_ids.shape[0], 1], dtype=torch.bool
+                    )
+
+                    # input_ids = input_ids.unsqueeze(1)  # shape=(batch, 1, seq_len)
+                    inputs.update({
+                        "beam_select_idx": beam_select_idx,
+                        "input_log_probs": input_log_probs,
+                        "input_unfinished_sents": input_unfinished_sents
+                    })
+
+            test_inputs.append(inputs)
 
         Gpt2Tester.test_generation(session,
                                    model,
                                    device,
                                    test_inputs,
+                                   input_texts=input_texts,
                                    precision=args.precision,
                                    model_class=args.model_class,
-                                   top_k=20,
+                                   top_k=2,
                                    top_k_no_order=True,
                                    max_steps=24,
                                    max_inputs=0,
+                                   beam_size=1,
                                    verbose=args.verbose,
                                    save_test_data=3,
-                                   save_test_data_dir=Path(output_path).parent)
+                                   save_test_data_dir=Path(output_path).parent,
+                                   use_beam_search_step=use_beam_search_step,
+                                   model_root_path=args.model_name_or_path)
 
     logger.info(f"Done. Output model: {output_path}")
 
