@@ -245,6 +245,10 @@ def main():
                 literals_file = model_dir / "literals.json"
                 token_lookback = 256
                 padding = 1
+                if use_beam_search_step:
+                    beam_size = 4
+                else:
+                    beam_size = 1
 
                 # prepare input_ids.
                 tokenizer = Tokenizer(model_dir)
@@ -260,7 +264,7 @@ def main():
                     initial_tokens.pop(-1)
                     
                 input_ids = tokenizer.convert_tokens_to_ids(initial_tokens)
-                input_ids = [input_ids[-token_lookback:]]
+                input_ids = [input_ids[-token_lookback:]] * beam_size
                 max_len = max(len(x) for x in input_ids)
                 input_ids = [[padding] * (max_len - len(x)) + x for x in input_ids]
                 input_ids = torch.from_numpy(numpy.asarray(input_ids, dtype=numpy.int64)).to(device)
@@ -283,12 +287,10 @@ def main():
                 if use_beam_search_step:
                     beam_select_idx = torch.zeros([1, input_ids.shape[0]]).long()
 
-                    input_log_probs = torch.zeros([input_ids.shape[0], 1])
+                    input_log_probs = torch.zeros([input_ids.shape[0] // beam_size, beam_size])
                     input_unfinished_sents = torch.ones(
-                        [input_ids.shape[0], 1], dtype=torch.bool
+                        [input_ids.shape[0] // beam_size, beam_size], dtype=torch.bool
                     )
-
-                    # input_ids = input_ids.unsqueeze(1)  # shape=(batch, 1, seq_len)
                     inputs.update({
                         "beam_select_idx": beam_select_idx,
                         "input_log_probs": input_log_probs,
@@ -308,7 +310,7 @@ def main():
                                    top_k_no_order=True,
                                    max_steps=24,
                                    max_inputs=0,
-                                   beam_size=1,
+                                   beam_size=beam_size,
                                    verbose=args.verbose,
                                    save_test_data=3,
                                    save_test_data_dir=Path(output_path).parent,

@@ -61,7 +61,7 @@ class MyGPT2LMHeadModel_BeamSearchStep(GPT2LMHeadModel):
         b.) call model on the unfinished sequences only
         c.) use `torch.scatter` to insert thef finished sequences back, and do the beam search step.
     '''
-    def __init__(self, config, beam_size=1):
+    def __init__(self, config, beam_size=4):
         super().__init__(config)
         self.beam_size = beam_size
 
@@ -80,7 +80,7 @@ class MyGPT2LMHeadModel_BeamSearchStep(GPT2LMHeadModel):
         param log_probs: shape=(batch, beam_size)
         param unfinished_sents: shape=(batch, beam_size), each cell indicates if a sequence is finished or not (i.e., having EOS at the end.)
         '''
-        batch_size = input_ids.size(0)
+        batch_size = input_ids.size(0) // self.beam_size
         input_ids = input_ids.view(batch_size, -1, input_ids.size(-1))
         past = [past[i].index_select(1,beam_select_idx[0]) for i in range(len(past))]
         logits_flat, present_flat = super().forward(
@@ -118,7 +118,7 @@ class MyGPT2LMHeadModel_BeamSearchStep(GPT2LMHeadModel):
         # get the next full input_ids
         input_ids = torch.cat([input_ids, next_token_ids.unsqueeze(-1)], dim=-1).contiguous()
 
-        return input_ids, present_flat, selected_index_flat, output_log_probs, output_unfinished_sents
+        return input_ids, present_flat, selected_input_seq, output_log_probs, output_unfinished_sents
 
 # Maps model class name to a tuple of model class, name of first output and use padding or not
 MODEL_CLASSES = {
@@ -197,7 +197,7 @@ class Gpt2Helper:
                          num_layer: int,
                          vocab_size: int,
                          device: torch.device,
-                         beam_size: int = 1,
+                         beam_size: int = 4,
                          float16: bool = False,
                          has_position_ids: bool = True,
                          has_attention_mask: bool = True,
@@ -206,20 +206,23 @@ class Gpt2Helper:
         """ Create random inputs for GPT2 model.
         Returns torch tensors of input_ids, position_ids, attention_mask and a list of past state tensors.
         """
+        # for non-beam search models, no beam size needed
+        if not has_beam_search:
+            beam_size = 1
+
         float_type = torch.float16 if float16 else torch.float32
-        past_shape = [2, batch_size, num_attention_heads, past_sequence_length, int(hidden_size / num_attention_heads)]
+        past_shape = [2, batch_size * beam_size, num_attention_heads, past_sequence_length, int(hidden_size / num_attention_heads)]
 
         past = [torch.rand(past_shape, dtype=float_type, device=device) for _ in range(num_layer)]
         input_ids = torch.randint(low=0,
                                   high=vocab_size - 1,
-                                  size=(batch_size, sequence_length),
+                                  size=(batch_size * beam_size, sequence_length),
                                   dtype=torch.int64,
                                   device=device)
-
         attention_mask = None
         if has_attention_mask:
             total_sequence_length = past_sequence_length + sequence_length
-            attention_mask = torch.ones([batch_size, total_sequence_length], dtype=float_type, device=device)
+            attention_mask = torch.ones([batch_size * beam_size, total_sequence_length], dtype=float_type, device=device)
             if total_sequence_length >= 2:
                 padding_position = random.randint(0, total_sequence_length - 1)  # test input with padding.
                 attention_mask[:, padding_position] = 0
@@ -227,13 +230,13 @@ class Gpt2Helper:
         # Deduce position_ids from attention mask
         beam_select_idx = None
         if has_beam_select_idx:
-            beam_select_idx = torch.zeros([1,batch_size]).long()
+            beam_select_idx = torch.zeros([1,batch_size * beam_size]).long()
         
         input_log_probs = None
         input_unfinished_sents = None
         if has_beam_search:
-            input_log_probs = torch.zeros([batch_size, 1], dtype=float_type, device=device)
-            input_unfinished_sents = torch.ones([batch_size, 1], dtype=torch.bool, device=device)
+            input_log_probs = torch.zeros([batch_size, beam_size], dtype=float_type, device=device)
+            input_unfinished_sents = torch.ones([batch_size, beam_size], dtype=torch.bool, device=device)
 
         # Deduce position_ids from attention mask
         position_ids = None
@@ -273,7 +276,7 @@ class Gpt2Helper:
         else:
             last_state_shape = [batch_size, sequence_length, vocab_size if output_name == "logits" else hidden_size]
         present_state_shape = [
-            2, batch_size, num_attention_heads, past_sequence_length + sequence_length,
+            2, batch_size * beam_size, num_attention_heads, past_sequence_length + sequence_length,
             int(hidden_size / num_attention_heads)
         ]
 
@@ -282,7 +285,7 @@ class Gpt2Helper:
             output_shapes["present_" + str(i)] = present_state_shape
 
         if has_beam_search:
-            output_shapes["output_selected_indices"] = [1, batch_size]
+            output_shapes["output_selected_indices"] = [1, batch_size * beam_size]
             output_shapes["output_log_probs"] = [batch_size, beam_size]
             output_shapes["output_unfinished_sents"] = [batch_size, beam_size]
         return output_shapes
@@ -708,7 +711,7 @@ class Gpt2Helper:
         max_batch_size = 8
         max_past_seq_len = 4  # Do not use large number here for higher chance of hitting empty past (past_seq_len=0)
         max_seq_len = 2
-        beam_size = 1
+        beam_size = 4
 
         output_buffers = None
         if use_io_binding:
