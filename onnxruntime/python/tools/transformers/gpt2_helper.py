@@ -114,7 +114,7 @@ class MyGPT2LMHeadModel_BeamSearchStep(GPT2LMHeadModel):
         # NOTE: to handle hidden state cache,  you'll need `selected_input_seq` to select the proper `present`/`past` state, the way as `input_ids` is selected above.
 
         output_unfinished_sents = input_unfinished_sents.gather(1, selected_input_seq)
-        output_unfinished_sents = output_unfinished_sents & next_token_ids.ne(self.eot_token_id)
+        output_unfinished_sents = output_unfinished_sents & next_token_ids.ne(self.config.eos_token_id) & next_token_ids.ne(self.eot_token_id)
         
         # get the next full input_ids
         # input_ids = torch.cat([input_ids, next_token_ids.unsqueeze(-1)], dim=-1).contiguous()

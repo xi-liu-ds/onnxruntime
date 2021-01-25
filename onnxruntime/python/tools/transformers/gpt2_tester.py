@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class Gpt2Metric:
-    def __init__(self, treatment_name, baseline_name='Torch', top_k=20):
+    def __init__(self, treatment_name, baseline_name='Torch', top_k=20, tokenize_latency=0):
         assert top_k > 1 and top_k <= 100
         self.baseline = baseline_name
         self.treatment = treatment_name
@@ -34,6 +34,7 @@ class Gpt2Metric:
         self.max_logits_diff_no_past: float = 0  # for empty past state
         self.batch_top1_error: torch.FloatTensor = None  # top 1 error for current batch
         self.batch_topk_error: torch.FloatTensor = None  # top k error for current batch
+        self.tokenize_latency = tokenize_latency
         self.seq_len_latency = {}
 
     def print(self):
@@ -65,6 +66,8 @@ class Gpt2Metric:
                 total += average * len(self.seq_len_latency[key])
                 count += len(self.seq_len_latency[key])
             print("Average Latency: {:.2f} ms".format(total / count))
+            print("Tokenize Latency: {:.2f} ms".format(self.tokenize_latency))
+            print("e2e Average Latency: {:.2f} ms".format(total / count + self.tokenize_latency))
 
     def diff_logits(self, baseline_logits, treatment_logits, is_empty_past: bool):
         diff = (baseline_logits - treatment_logits).abs().max()
@@ -341,6 +344,7 @@ class Gpt2Tester:
                         model,
                         device,
                         test_inputs,
+                        tokenize_latency=0,
                         input_texts=None,
                         precision=Precision.FLOAT32,
                         model_class='Gpt2LMHeadModel',
@@ -387,9 +391,9 @@ class Gpt2Tester:
 
         baseline_name = 'Torch'
         treatment_name = 'Quantized Onnx' if precision == Precision.INT8 else "Onnx"
-        torch_metric = Gpt2Metric(baseline_name, baseline_name, top_k)
-        onnx_metric = Gpt2Metric(treatment_name, baseline_name, top_k)
-        onnx_io_metric = Gpt2Metric(treatment_name + ' with IO Binding', baseline_name, top_k)
+        torch_metric = Gpt2Metric(baseline_name, baseline_name, top_k, tokenize_latency)
+        onnx_metric = Gpt2Metric(treatment_name, baseline_name, top_k, tokenize_latency)
+        onnx_io_metric = Gpt2Metric(treatment_name + ' with IO Binding', baseline_name, top_k, tokenize_latency)
 
         for i, inputs in enumerate(test_inputs):
             if (max_inputs > 0 and i == max_inputs):
@@ -477,13 +481,14 @@ class Gpt2Tester:
                     onnx_io_metric.eval_batch(torch_runner, onnx_io_runner, past_seq_len, verbose=verbose)
 
                     if use_beam_search_step:
-                        done = done | (not onnx_io_runner.input_unfinished_sents.any())
+                        done = done | (not onnx_io_runner.input_unfinished_sents.all())
                     else:
                         done = done | (torch_runner.top_1_tokens == eos_token_id).any()
                     if torch.all(done):
                         print('break at step: ', step)
                         break
-
+            
+            print(f'Totally {step+1} steps run')
             onnx_metric.end_batch()
             onnx_io_metric.end_batch()
 

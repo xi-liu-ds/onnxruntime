@@ -19,6 +19,7 @@ import os
 import argparse
 import coloredlogs
 import logging
+import timeit
 import torch
 import numpy
 import json
@@ -262,8 +263,10 @@ def main():
                     initial_tokens.append(END_OF_LINE)
                 if input_texts[-1] != "\n":
                     initial_tokens.pop(-1)
-                    
+                
+                start_time = timeit.default_timer()
                 input_ids = tokenizer.convert_tokens_to_ids(initial_tokens)
+                tokenize_latency = timeit.default_timer() - start_time
                 input_ids = [input_ids[-token_lookback:]]
                 max_len = max(len(x) for x in input_ids)
                 tokens_beam = [[padding] * (max_len - len(x)) + x for x in input_ids]
@@ -308,6 +311,7 @@ def main():
                                    model,
                                    device,
                                    test_inputs,
+                                   tokenize_latency=tokenize_latency,
                                    input_texts=input_texts,
                                    precision=args.precision,
                                    model_class=args.model_class,
