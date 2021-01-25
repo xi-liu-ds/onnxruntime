@@ -129,8 +129,8 @@ class Gpt2Tester:
                  top_k=20,
                  top_k_required_order=False):
 
-        self.batch_size = input_ids.shape[0] // beam_size
-        self.input_length = input_ids.shape[1]
+        self.batch_size = input_ids.shape[0]
+        self.input_length = input_ids.shape[-1]
         self.n_layer = num_layer
         self.beam_size = beam_size
 
@@ -148,9 +148,12 @@ class Gpt2Tester:
 
         self.has_beam_search = input_log_probs is not None and input_unfinished_sents is not None
 
+        if self.has_beam_search:
+            self.results = self.input_ids.view(self.batch_size, self.input_ids.size(-1))
+
         # Emtpy past state for first inference
         self.past = []
-        past_shape = [2, self.batch_size * beam_size, num_attention_heads, 0, hidden_size // num_attention_heads]
+        past_shape = [2, self.batch_size, num_attention_heads, 0, hidden_size // num_attention_heads]
         for i in range(num_layer):
             empty_past = torch.empty(past_shape).type(torch.float16 if is_fp16 else torch.float32)
             self.past.append(empty_past.to(device))
@@ -217,23 +220,8 @@ class Gpt2Tester:
         self.logits = torch.from_numpy(output[0]) if isinstance(output[0],
                                                                 numpy.ndarray) else output[0].clone().detach().cpu()
 
-        self.top_1_tokens = Gpt2Tester.predict_next_token(self.logits)
-        self.top_k_tokens = Gpt2Tester.predict_next_token(self.logits, self.top_k, self.top_k_required_order)
-
         if self.has_beam_search:
-            self.input_ids = self.logits.view(self.batch_size * self.beam_size, -1).to(device)
-            if self.has_attention_mask:
-                past_sequence_length = self.logits.size(-1)
-                past_attention_mask_length = self.attention_mask.size(-1)
-                self.attention_mask = torch.cat(
-                    [self.attention_mask,
-                    torch.ones([self.batch_size * self.beam_size, past_sequence_length]).type_as(self.attention_mask)], 1).to(device)
-        
-            if self.has_position_ids:
-                assert self.has_attention_mask, 'must have attention_mask before having position_ids!'
-                self.position_ids = (self.attention_mask.long().cumsum(-1) - 1)
-                self.position_ids.masked_fill_(self.position_ids < 0, 0)
-                self.position_ids = self.position_ids[:, past_attention_mask_length:].contiguous().to(device)
+            self.input_ids = self.logits
             
             self.beam_select_idx = torch.from_numpy(output[-3]).to(device) if isinstance(output[-3],
                                                                 numpy.ndarray) else output[-3].clone().detach().cpu()
@@ -241,17 +229,27 @@ class Gpt2Tester:
                                                                 numpy.ndarray) else output[-2].clone().detach().cpu()
             self.input_unfinished_sents = torch.from_numpy(output[-1]).to(device) if isinstance(output[-1],
                                                                 numpy.ndarray) else output[-1].clone().detach().cpu()
+            self.top_1_tokens = Gpt2Tester.predict_next_token(self.input_log_probs)
+            self.top_k_tokens = Gpt2Tester.predict_next_token(self.input_log_probs, self.top_k, self.top_k_required_order)
+            if self.results.size(0) != self.logits.size(0):
+                self.results = self.results.repeat(self.batch_size * self.beam_size, 1)
+            self.results = torch.cat([self.results, self.logits], dim=-1)
         else: 
+            self.top_1_tokens = Gpt2Tester.predict_next_token(self.logits)
+            self.top_k_tokens = Gpt2Tester.predict_next_token(self.logits, self.top_k, self.top_k_required_order)
+
             self.input_ids = self.top_1_tokens.clone().detach().reshape([self.batch_size, 1]).to(device)
             
-            if self.has_position_ids:
-                self.position_ids = torch.tensor([self.input_length + step - 1]).unsqueeze(0).repeat(self.batch_size,
-                                                                                                 1).to(device)
-            
-            if self.has_attention_mask:
-                self.attention_mask = torch.cat(
-                    [self.attention_mask,
-                    torch.ones([self.batch_size, 1]).type_as(self.attention_mask)], 1).to(device)
+        if self.has_position_ids:
+            self.position_ids = torch.tensor([self.input_length + step - 1]).unsqueeze(0).repeat(self.batch_size * self.beam_size,
+                                                                                                1).to(device)
+        
+        if self.has_attention_mask:
+            if self.attention_mask.size(0) != self.logits.size(0) and self.has_beam_search:
+                self.attention_mask = self.attention_mask.repeat(self.batch_size * self.beam_size, 1)
+            self.attention_mask = torch.cat(
+                [self.attention_mask,
+                torch.ones([self.batch_size * self.beam_size, 1]).type_as(self.attention_mask)], 1).to(device)
 
         self.past = []
 
@@ -381,6 +379,7 @@ class Gpt2Tester:
                                                           past_sequence_length=128,
                                                           sequence_length=32,
                                                           beam_size=1,
+                                                          step=0,
                                                           config=model.config,
                                                           model_class=model_class,
                                                           has_beam_search=use_beam_search_step)
@@ -441,6 +440,7 @@ class Gpt2Tester:
                                                                  past_seq_len,
                                                                  seq_len,
                                                                  beam_size,
+                                                                 step,
                                                                  model.config,
                                                                  model_class=model_class,
                                                                  has_beam_search=use_beam_search_step)
@@ -481,6 +481,7 @@ class Gpt2Tester:
                     else:
                         done = done | (torch_runner.top_1_tokens == eos_token_id).any()
                     if torch.all(done):
+                        print('break at step: ', step)
                         break
 
             onnx_metric.end_batch()
@@ -495,8 +496,7 @@ class Gpt2Tester:
             print("\tONNX")
             Gpt2Tester.pprint_results(
                 input_texts, 
-                onnx_runner.input_ids, 
-                onnx_runner.input_log_probs, 
+                onnx_runner.results, 
                 tokenizer,
                 pad_token_id=eos_token_id,
                 eos_token_id=eos_token_id
@@ -504,23 +504,20 @@ class Gpt2Tester:
             print("\tONNX with IO binding")
             Gpt2Tester.pprint_results(
                 input_texts, 
-                onnx_io_runner.input_ids, 
-                onnx_io_runner.input_log_probs, 
+                onnx_io_runner.results, 
                 tokenizer, 
                 pad_token_id=eos_token_id,
                 eos_token_id=eos_token_id
             )
 
     @staticmethod
-    def pprint_results(input_texts, output_ids, output_probs, tokenizer, pad_token_id=None, eos_token_id=None):
+    def pprint_results(input_texts, output_ids, tokenizer, pad_token_id=None, eos_token_id=None):
         if pad_token_id is None:
             pad_token_id = 1
         if eos_token_id is None:
             eos_token_id = 1
         if torch.is_tensor(output_ids):
             output_ids = output_ids.cpu().numpy()
-        if torch.is_tensor(output_probs):
-            output_probs = output_probs.cpu().numpy()
         if not isinstance(input_texts, list) and not isinstance(input_texts, numpy.ndarray):
             print(f'>> Input:\n\t{input_texts}')
         for i, sample in enumerate(output_ids):
@@ -539,8 +536,9 @@ class Gpt2Tester:
                             seq = seq[:k + 1]
                             break
                     print('-' * 40)
-                    print(f'>> Output {j + 1}: score={output_probs[i, j]:.3g}\n\t{[tokenizer.convert_id_to_token(token_id) for token_id in seq]}')
+                    print(f'>> Output {j + 1}: \t{[tokenizer.convert_id_to_token(token_id) for token_id in seq]}')
                 else:
                     result = ''.join([tokenizer.convert_id_to_token(token_id) for token_id in sample])
-                    print(f'>> Output {j + 1}: score={output_probs[0, j]:.3g}\n\t{result}')
+                    print(f'>> Output {i}: \t{result}')
+                    break
             print('=' * 80)

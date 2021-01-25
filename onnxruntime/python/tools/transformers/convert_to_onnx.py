@@ -188,7 +188,7 @@ def main():
     logger.info(f"Output path: {output_path}")
 
     session = create_onnxruntime_session(output_path, args.use_gpu, enable_all_optimization=True, verbose=args.verbose)
-    if session is not None:
+    if session is not None and not use_beam_search_step:
         Gpt2Helper.test_parity(session,
                                model,
                                device,
@@ -244,7 +244,7 @@ def main():
                 model_dir = Path(args.model_name_or_path)
                 literals_file = model_dir / "literals.json"
                 token_lookback = 256
-                padding = 1
+                padding = 2
                 if use_beam_search_step:
                     beam_size = 4
                 else:
@@ -264,10 +264,15 @@ def main():
                     initial_tokens.pop(-1)
                     
                 input_ids = tokenizer.convert_tokens_to_ids(initial_tokens)
-                input_ids = [input_ids[-token_lookback:]] * beam_size
+                input_ids = [input_ids[-token_lookback:]]
                 max_len = max(len(x) for x in input_ids)
-                input_ids = [[padding] * (max_len - len(x)) + x for x in input_ids]
-                input_ids = torch.from_numpy(numpy.asarray(input_ids, dtype=numpy.int64)).to(device)
+                tokens_beam = [[padding] * (max_len - len(x)) + x for x in input_ids]
+                # tokens_beam = [padding] * (beam_size * max_len)
+                # for k in range(1):
+                #     for j in range(beam_size):
+                #         for i in range(max_len-len(input_ids[k]), max_len):
+                #             tokens_beam[k * beam_size * max_len + j * max_len + i] = input_ids[k][i - (max_len - len(input_ids[k]))]            
+                input_ids = torch.from_numpy(numpy.asarray(tokens_beam, dtype=numpy.int64)).to(device)
             
                 # prepare input arguments.
                 attention_mask = (
@@ -287,9 +292,9 @@ def main():
                 if use_beam_search_step:
                     beam_select_idx = torch.zeros([1, input_ids.shape[0]]).long()
 
-                    input_log_probs = torch.zeros([input_ids.shape[0] // beam_size, beam_size])
+                    input_log_probs = torch.zeros([input_ids.shape[0], 1])
                     input_unfinished_sents = torch.ones(
-                        [input_ids.shape[0] // beam_size, beam_size], dtype=torch.bool
+                        [input_ids.shape[0], 1], dtype=torch.bool
                     )
                     inputs.update({
                         "beam_select_idx": beam_select_idx,
@@ -306,7 +311,7 @@ def main():
                                    input_texts=input_texts,
                                    precision=args.precision,
                                    model_class=args.model_class,
-                                   top_k=2,
+                                   top_k=5,
                                    top_k_no_order=True,
                                    max_steps=24,
                                    max_inputs=0,
