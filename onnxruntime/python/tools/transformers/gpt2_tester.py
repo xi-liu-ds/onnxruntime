@@ -57,17 +57,22 @@ class Gpt2Metric:
             print("Past sequence length range and average latency:")
             total = 0
             count = 0
+            averages = []
             for key in sorted(self.seq_len_latency.keys()):
                 average = statistics.mean(self.seq_len_latency[key]) * 1000.0
                 if key == 0:
+                    org_avg = average
                     print("\t{}:         \t{:.2f} ms".format(key, average))
                 else:
+                    averages.append(abs(average - org_avg))
+                    org_avg = average
                     print("\t[{}, {}]:\t{:.2f} ms".format(2**key, 2**(key + 1) - 1, average))
                 total += average * len(self.seq_len_latency[key])
                 count += len(self.seq_len_latency[key])
             print("Average Latency: {:.2f} ms".format(total / count))
             print("Tokenize Latency: {:.2f} ms".format(self.tokenize_latency))
-            print("e2e Average Latency: {:.2f} ms".format(total / count + self.tokenize_latency))
+            print("e2e Average Latency: {:.2f} ms".format(total + self.tokenize_latency))
+            print("Latency Variance: {:.2f}ms".format(sum(averages) / (count - 1)))
 
     def diff_logits(self, baseline_logits, treatment_logits, is_empty_past: bool):
         diff = (baseline_logits - treatment_logits).abs().max()
