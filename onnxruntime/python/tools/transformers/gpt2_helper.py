@@ -110,7 +110,7 @@ class MyGPT2LMHeadModel_BeamSearchStep(GPT2LMHeadModel):
         selected_input_seq = selected_index_flat // self.beam_size
         next_token_ids = next_token_ids.view(self.batch_size, -1).gather(-1, selected_index_flat)
         
-        input_ids = input_ids.gather(1, selected_input_seq.unsqueeze(-1).repeat(1, 1, input_ids.size(-1)))
+        # input_ids = input_ids.gather(1, selected_input_seq.unsqueeze(-1).repeat(1, 1, input_ids.size(-1)))
         # NOTE: to handle hidden state cache,  you'll need `selected_input_seq` to select the proper `present`/`past` state, the way as `input_ids` is selected above.
 
         output_unfinished_sents = input_unfinished_sents.gather(1, selected_input_seq)
@@ -119,7 +119,7 @@ class MyGPT2LMHeadModel_BeamSearchStep(GPT2LMHeadModel):
         # get the next full input_ids
         # input_ids = torch.cat([input_ids, next_token_ids.unsqueeze(-1)], dim=-1).contiguous()
 
-        return next_token_ids.view(self.batch_size * self.beam_size, -1), present_flat, selected_input_seq, output_log_probs, output_unfinished_sents
+        return next_token_ids, present_flat, selected_input_seq, output_log_probs, output_unfinished_sents
 
 # Maps model class name to a tuple of model class, name of first output and use padding or not
 MODEL_CLASSES = {

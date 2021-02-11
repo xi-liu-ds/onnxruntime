@@ -157,7 +157,7 @@ class Gpt2Tester:
         self.has_beam_search = input_log_probs is not None and input_unfinished_sents is not None
 
         if self.has_beam_search:
-            self.results = self.input_ids.view(self.batch_size, self.input_ids.size(-1))
+            self.results = self.input_ids.view(self.batch_size, -1, self.input_ids.size(-1))
 
         # Emtpy past state for first inference
         self.past = []
@@ -229,7 +229,7 @@ class Gpt2Tester:
                                                                 numpy.ndarray) else output[0].clone().detach().cpu()
 
         if self.has_beam_search:
-            self.input_ids = self.logits
+            self.input_ids = self.logits.view(self.batch_size * self.beam_size, -1)
             
             self.beam_select_idx = torch.from_numpy(output[-3]).to(device) if isinstance(output[-3],
                                                                 numpy.ndarray) else output[-3].clone().detach().cpu()
@@ -239,9 +239,8 @@ class Gpt2Tester:
                                                                 numpy.ndarray) else output[-1].clone().detach().cpu()
             self.top_1_tokens = Gpt2Tester.predict_next_token(self.input_log_probs)
             self.top_k_tokens = Gpt2Tester.predict_next_token(self.input_log_probs, self.top_k, self.top_k_required_order)
-            if self.results.size(0) != self.logits.size(0):
-                self.results = self.results.repeat(self.batch_size * self.beam_size, 1)
-            self.results = torch.cat([self.results, self.logits], dim=-1)
+            self.results = self.results.gather(1, self.beam_select_idx.unsqueeze(-1).repeat(1, 1, self.results.size(-1)))
+            self.results = torch.cat([self.results, self.logits.unsqueeze(-1)], dim=-1)
         else: 
             self.top_1_tokens = Gpt2Tester.predict_next_token(self.logits)
             self.top_k_tokens = Gpt2Tester.predict_next_token(self.logits, self.top_k, self.top_k_required_order)
@@ -253,7 +252,7 @@ class Gpt2Tester:
                                                                                                 1).to(device)
         
         if self.has_attention_mask:
-            if self.attention_mask.size(0) != self.logits.size(0) and self.has_beam_search:
+            if self.attention_mask.size(0) != (self.batch_size * self.beam_size) and self.has_beam_search:
                 self.attention_mask = self.attention_mask.repeat(self.batch_size * self.beam_size, 1)
             self.attention_mask = torch.cat(
                 [self.attention_mask,
@@ -457,21 +456,21 @@ class Gpt2Tester:
                         output_shapes['logits'] = [output_shapes['logits'][0],output_shapes['logits'][2]]
                     Gpt2Helper.auto_increase_buffer_size(output_buffers, output_shapes)
 
-                    onnx_io_output, avg_latency_ms = Gpt2Helper.onnxruntime_inference_with_binded_io(
-                        session,
-                        onnx_io_runner.get_inputs(),
-                        output_buffers,
-                        output_shapes,
-                        total_runs=1,
-                        return_numpy=False,
-                        include_copy_output_latency=True)
-                    onnx_io_metric.add_latency(past_seq_len, avg_latency_ms / 1000.0)
+                    # onnx_io_output, avg_latency_ms = Gpt2Helper.onnxruntime_inference_with_binded_io(
+                    #     session,
+                    #     onnx_io_runner.get_inputs(),
+                    #     output_buffers,
+                    #     output_shapes,
+                    #     total_runs=1,
+                    #     return_numpy=False,
+                    #     include_copy_output_latency=True)
+                    # onnx_io_metric.add_latency(past_seq_len, avg_latency_ms / 1000.0)
 
-                    if test_data_saved < save_test_data:
-                        onnx_io_runner.save_test_data(session, onnx_io_output, save_test_data_dir, test_data_saved)
-                        test_data_saved += 1
+                    # if test_data_saved < save_test_data:
+                    #     onnx_io_runner.save_test_data(session, onnx_io_output, save_test_data_dir, test_data_saved)
+                    #     test_data_saved += 1
 
-                    onnx_io_runner.update(onnx_io_output, step, device)
+                    # onnx_io_runner.update(onnx_io_output, step, device)
 
                     if verbose:
                         onnx_runner.diff(onnx_io_runner)
@@ -483,10 +482,10 @@ class Gpt2Tester:
                         print("\tONNX with IO binding", onnx_io_runner.top_1_tokens)
 
                     onnx_metric.eval_batch(torch_runner, onnx_runner, past_seq_len, verbose=verbose)
-                    onnx_io_metric.eval_batch(torch_runner, onnx_io_runner, past_seq_len, verbose=verbose)
+                    # onnx_io_metric.eval_batch(torch_runner, onnx_io_runner, past_seq_len, verbose=verbose)
 
                     if use_beam_search_step:
-                        done = done | (not onnx_io_runner.input_unfinished_sents.all())
+                        done = done | (not onnx_runner.input_unfinished_sents.all())
                     else:
                         done = done | (torch_runner.top_1_tokens == eos_token_id).any()
                     if torch.all(done):
@@ -506,19 +505,19 @@ class Gpt2Tester:
             print("\tONNX")
             Gpt2Tester.pprint_results(
                 input_texts, 
-                onnx_runner.results, 
+                onnx_runner.results.view(batch_size * beam_size, -1), 
                 tokenizer,
                 pad_token_id=eos_token_id,
                 eos_token_id=eos_token_id
             )
-            print("\tONNX with IO binding")
-            Gpt2Tester.pprint_results(
-                input_texts, 
-                onnx_io_runner.results, 
-                tokenizer, 
-                pad_token_id=eos_token_id,
-                eos_token_id=eos_token_id
-            )
+            # print("\tONNX with IO binding")
+            # Gpt2Tester.pprint_results(
+            #     input_texts, 
+            #     onnx_io_runner.results, 
+            #     tokenizer, 
+            #     pad_token_id=eos_token_id,
+            #     eos_token_id=eos_token_id
+            # )
 
     @staticmethod
     def pprint_results(input_texts, output_ids, tokenizer, pad_token_id=None, eos_token_id=None):
