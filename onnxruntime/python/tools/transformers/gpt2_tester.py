@@ -128,7 +128,8 @@ class Gpt2Tester:
                  beam_select_idx,
                  input_log_probs,
                  input_unfinished_sents,
-                 last_step_results,
+                 prev_step_results,
+                 prev_step_scores,
                  num_attention_heads,
                  hidden_size,
                  num_layer,
@@ -157,7 +158,8 @@ class Gpt2Tester:
 
         self.has_beam_search = input_log_probs is not None and input_unfinished_sents is not None
 
-        self.last_step_results = last_step_results
+        self.prev_step_results = prev_step_results
+        self.prev_step_scores = prev_step_scores
 
         # Emtpy past state for first inference
         self.past = []
@@ -180,7 +182,8 @@ class Gpt2Tester:
             self.beam_select_idx,
             self.input_log_probs,
             self.input_unfinished_sents,
-            self.last_step_results,
+            self.prev_step_results,
+            self.prev_step_scores,
             self.past
         )
 
@@ -232,13 +235,15 @@ class Gpt2Tester:
         if self.has_beam_search:
             self.input_ids = self.logits.view(self.batch_size * self.beam_size, -1)
             
-            self.beam_select_idx = torch.from_numpy(output[-4]).to(device) if isinstance(output[-4],
+            self.beam_select_idx = torch.from_numpy(output[-5]).to(device) if isinstance(output[-5],
+                                                                numpy.ndarray) else output[-5].clone().detach().cpu()
+            self.input_log_probs = torch.from_numpy(output[-4]).to(device) if isinstance(output[-4],
                                                                 numpy.ndarray) else output[-4].clone().detach().cpu()
-            self.input_log_probs = torch.from_numpy(output[-3]).to(device) if isinstance(output[-3],
+            self.input_unfinished_sents = torch.from_numpy(output[-3]).to(device) if isinstance(output[-3],
                                                                 numpy.ndarray) else output[-3].clone().detach().cpu()
-            self.input_unfinished_sents = torch.from_numpy(output[-2]).to(device) if isinstance(output[-2],
+            self.prev_step_results =  torch.from_numpy(output[-2]).to(device) if isinstance(output[-2],
                                                                 numpy.ndarray) else output[-2].clone().detach().cpu()
-            self.last_step_results =  torch.from_numpy(output[-1]).to(device) if isinstance(output[-1],
+            self.prev_step_scores =  torch.from_numpy(output[-1]).to(device) if isinstance(output[-1],
                                                                 numpy.ndarray) else output[-1].clone().detach().cpu()
             self.top_1_tokens = Gpt2Tester.predict_next_token(self.input_log_probs)
             self.top_k_tokens = Gpt2Tester.predict_next_token(self.input_log_probs, self.top_k, self.top_k_required_order)    
@@ -405,24 +410,29 @@ class Gpt2Tester:
                 break
             if i % 10 == 0:
                 print(f"{i}")
-            last_step_results = inputs["input_ids"]
             input_ids = inputs["input_ids"]
             position_ids = inputs["position_ids"] if "position_ids" in inputs else None
             attention_mask = inputs["attention_mask"] if "attention_mask" in inputs else None
             beam_select_idx = inputs["beam_select_idx"] if "beam_select_idx" in inputs else None
             input_log_probs = inputs["input_log_probs"] if "input_log_probs" in inputs else None
             input_unfinished_sents = inputs["input_unfinished_sents"] if "input_unfinished_sents" in inputs else None
+            prev_step_results = inputs["input_ids"]
+            if "prev_step_scores" in inputs:
+                prev_step_scores = inputs["prev_step_scores"] 
+            else: 
+                prev_step_scores = torch.zeros([input_ids.shape[0], 1])
+
             onnx_runner = Gpt2Tester(input_ids, position_ids, attention_mask, 
                                      beam_select_idx, input_log_probs, input_unfinished_sents,
-                                     last_step_results, n_head, n_embd, n_layer, beam_size, device,
+                                     prev_step_results, prev_step_scores, n_head, n_embd, n_layer, beam_size, device,
                                      is_float16, top_k, not top_k_no_order)
-            # onnx_io_runner = Gpt2Tester(last_step_results, input_ids, position_ids, attention_mask, 
+            # onnx_io_runner = Gpt2Tester(input_ids, position_ids, attention_mask, 
             #                             beam_select_idx, input_log_probs, input_unfinished_sents,
             #                             n_head, n_embd, n_layer, beam_size, device,
             #                             is_float16, top_k, not top_k_no_order)
             torch_runner = Gpt2Tester(input_ids, position_ids, attention_mask, 
                                       beam_select_idx, input_log_probs, input_unfinished_sents,
-                                      last_step_results, n_head, n_embd, n_layer, beam_size, device, 
+                                      prev_step_results, prev_step_scores, n_head, n_embd, n_layer, beam_size, device, 
                                       False, top_k, not top_k_no_order)  # Torch model baseline is fp32
 
             batch_size = torch_runner.batch_size
@@ -508,7 +518,8 @@ class Gpt2Tester:
             print("\tONNX")
             Gpt2Tester.pprint_results(
                 input_texts, 
-                onnx_runner.last_step_results.view(batch_size * beam_size, -1), 
+                onnx_runner.prev_step_results.view(batch_size * beam_size, -1), 
+                onnx_runner.prev_step_scores.view(batch_size * beam_size, -1), 
                 tokenizer,
                 pad_token_id=eos_token_id,
                 eos_token_id=eos_token_id
@@ -523,7 +534,7 @@ class Gpt2Tester:
             # )
 
     @staticmethod
-    def pprint_results(input_texts, output_ids, tokenizer, pad_token_id=None, eos_token_id=None):
+    def pprint_results(input_texts, output_ids, output_scores, tokenizer, pad_token_id=None, eos_token_id=None):
         if pad_token_id is None:
             pad_token_id = 1
         if eos_token_id is None:
@@ -552,5 +563,6 @@ class Gpt2Tester:
                 else:
                     result = ''.join([tokenizer.convert_id_to_token(token_id) for token_id in sample])
                     print(f'>> Output {i}: \t{result}')
+                    print(f'>> Scores {i}: \t{output_scores[i]}')
                     break
             print('=' * 80)
